@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0b0d">
+    <title>Prompt Me</title>
+    <link rel="preload" href="fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+    <style>
+        /* Fonts are served from this origin, not Google's. The app makes no
+           third-party requests at all, which is what lets it honestly claim
+           nothing leaves the device. Both families are OFL licensed, see
+           fonts/OFL.txt. Variable files, so one per family covers every weight. */
+        @font-face {
+            font-family: 'Archivo';
+            font-style: normal;
+            font-weight: 100 900;
+            font-display: swap;
+            src: url('fonts/archivo.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 100 900;
+            font-display: swap;
+            src: url('fonts/fraunces.woff2') format('woff2');
+        }
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: italic;
+            font-weight: 100 900;
+            font-display: swap;
+            src: url('fonts/fraunces-italic.woff2') format('woff2');
+        }
+
+        /* ============================================================
+           The camera feed is the only source of colour in this app.
+           The interface stays achromatic so it never competes with the
+           user's face, and so the screen does not cast a colour onto it.
+           Red appears exactly once, on the recording indicator, where it
+           carries meaning.
+           ============================================================ */
+        :root {
+            --ink:        oklch(12% 0.008 265);
+            --ink-soft:   oklch(18% 0.008 265);
+            --bone:       oklch(97% 0.004 85);
+            /* The words not yet read are the ones with a job to do, so they sit
+               close to full strength. Read words fade, but stay legible enough
+               to glance back at. */
+            --bone-dim:   oklch(97% 0.004 85 / 0.92);
+            --bone-faint: oklch(97% 0.004 85 / 0.40);
+            --rec:        oklch(63% 0.21 25);
+
+            /* Home screen only: warm, printed, deliberately unlike the prompter */
+            --paper:      oklch(95.5% 0.018 78);
+            --card:       oklch(98.5% 0.008 78);
+            --umber:      oklch(28% 0.045 45);
+            --clay:       oklch(52% 0.13 40);
+            --saffron:    oklch(80% 0.15 72);
+            --sage:       oklch(90% 0.05 145);
+            --rule:       oklch(28% 0.045 45 / 0.14);
+
+            --display: 'Fraunces', Georgia, 'Times New Roman', serif;
+            --body: 'Archivo', ui-sans-serif, system-ui, -apple-system, sans-serif;
+            --shade: 0.62;
+            --font-size: 34px;
+            --ease: cubic-bezier(0.16, 1, 0.3, 1); /* ease-out-expo */
+        }
+
+        [hidden] { display: none !important; }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: var(--ink);
+            color: var(--bone);
+            font-family: var(--body);
+            -webkit-font-smoothing: antialiased;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+        /* ============================================================
+           Setup. The prompter has to stay colourless because it sits over
+           live video. Nothing sits behind this screen, so it gets to be
+           warm, printed and loud, and the cut to black when you start
+           reading becomes part of the experience.
+           ============================================================ */
+        #setup {
+            position: relative;
+            height: 100dvh;
+            overflow-y: auto;
+            padding: 0 0 calc(28px + env(safe-area-inset-bottom));
+            background: var(--paper);
+            color: var(--umber);
+        }
+
+        .sheet-inner {
+            position: relative;
+            z-index: 1;
+            max-width: 34rem;
+            margin: 0 auto;
+            padding: 0 26px;
+        }
+
+        /* Paper grain, laid over the whole setup screen. Scoped to #setup so it
+           never touches the prompter, where any texture would fight the video. */
+        #setup::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 40;
+            pointer-events: none;
+            opacity: 0.4;
+            mix-blend-mode: multiply;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+        }
+
+        /* Masthead */
+        .masthead {
+            position: relative;
+            text-align: center;
+            padding: clamp(26px, 6dvh, 54px) 26px 30px;
+            background: var(--clay);
+            color: var(--paper);
+            border-radius: 0 0 30px 30px;
+            overflow: hidden;
+        }
+        /* A halftone dot screen, the way a riso print lays colour down. */
+        .masthead::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image: radial-gradient(var(--saffron) 1.1px, transparent 1.2px);
+            background-size: 9px 9px;
+            opacity: 0.28;
+        }
+        .masthead::after {
+            /* One oversized disc, cropped. More confident than a mesh gradient,
+               and it survives at any screen size. */
+            content: "";
+            position: absolute;
+            top: -52%; right: -24%;
+            width: 68vw; height: 68vw;
+            max-width: 230px; max-height: 230px;
+            border-radius: 50%;
+            background: var(--saffron);
+        }
+        .masthead > * { position: relative; z-index: 1; }
+
+        .slate {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 0 clamp(16px, 4dvh, 30px);
+            font-size: 0.625rem;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: oklch(94% 0.03 70 / 0.82);
+        }
+        .slate .take {
+            padding: 3px 8px;
+            border: 1px solid oklch(94% 0.03 70 / 0.45);
+            border-radius: 4px;
+            font-variant-numeric: tabular-nums;
+        }
+        .slate .spacer {
+            flex: 1;
+            height: 1px;
+            border-top: 1px dashed oklch(94% 0.03 70 / 0.4);
+        }
+
+        .wordmark {
+            margin: 0 auto;
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-weight: 900;
+            font-size: clamp(3.4rem, 21vw, 5.6rem);
+            letter-spacing: -0.045em;
+            line-height: 0.82;
+            /* Breaks to two lines on purpose: it reads better, and it keeps the
+               accented word off the disc, where it would vanish. */
+            max-width: 5ch;
+        }
+        .wordmark em {
+            display: block;
+            font-style: italic;
+            font-weight: 600;
+            color: var(--saffron);
+        }
+
+        .lede {
+            margin: 18px auto 0;
+            font-size: 0.9375rem;
+            line-height: 1.55;
+            max-width: 27ch;
+            color: oklch(94% 0.03 70 / 0.88);
+        }
+
+        /* Page load: one orchestrated reveal, top to bottom. */
+        @keyframes riseIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to   { opacity: 1; transform: none; }
+        }
+        .slate, .wordmark, .lede, .composer > * {
+            animation: riseIn 620ms var(--ease) backwards;
+        }
+        .slate    { animation-delay: 40ms; }
+        .wordmark { animation-delay: 110ms; }
+        .lede     { animation-delay: 200ms; }
+        .composer > *:nth-child(1) { animation-delay: 270ms; }
+        .composer > *:nth-child(2) { animation-delay: 330ms; }
+        .composer > *:nth-child(3) { animation-delay: 380ms; }
+        .composer > *:nth-child(4) { animation-delay: 430ms; }
+        .composer > *:nth-child(5) { animation-delay: 470ms; }
+
+        /* Composer */
+        .composer { padding-top: 24px; }
+
+        #setup-note {
+            margin: 0 0 16px;
+            padding: 12px 14px;
+            border-radius: 4px;
+            border: 1.5px solid oklch(58% 0.11 145);
+            background: var(--sage);
+            box-shadow: 6px 6px 0 oklch(58% 0.11 145 / 0.28);
+            color: oklch(34% 0.07 145);
+            font-size: 0.875rem;
+            font-weight: 500;
+            line-height: 1.45;
+            text-align: center;
+        }
+
+        .label {
+            display: block;
+            text-align: center;
+            margin: 0 0 8px;
+            font-size: 0.625rem;
+            font-weight: 600;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: oklch(48% 0.05 45);
+        }
+
+        #script-input {
+            width: 100%;
+            min-height: 32dvh;
+            resize: none;
+            padding: 20px;
+            border-radius: 4px;
+            border: 1.5px solid var(--umber);
+            background: var(--card);
+            color: var(--umber);
+            font-family: inherit;
+            font-size: 1.0625rem;
+            line-height: 1.7;
+            /* Offset solid shadow: two plates printed slightly out of register. */
+            box-shadow: 6px 6px 0 oklch(28% 0.045 45 / 0.13);
+            transition: box-shadow 180ms var(--ease), transform 180ms var(--ease);
+        }
+        #script-input::placeholder { color: oklch(52% 0.03 55 / 0.5); }
+        #script-input:focus {
+            outline: none;
+            box-shadow: 6px 6px 0 var(--clay);
+        }
+
+        .meta-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 14px;
+        }
+        #read-time {
+            padding: 5px 11px;
+            border-radius: 999px;
+            background: var(--sage);
+            color: oklch(38% 0.06 145);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            font-variant-numeric: tabular-nums;
+        }
+        #sample-btn {
+            color: var(--clay);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            text-decoration: underline;
+            text-underline-offset: 4px;
+            text-decoration-thickness: 1.5px;
+            padding: 4px 0;
+        }
+
+        .field {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1.5px dashed var(--rule);
+            font-size: 0.9375rem;
+            font-weight: 500;
+        }
+        #lang-select {
+            appearance: none;
+            padding: 11px 38px 11px 14px;
+            border-radius: 4px;
+            border: 1.5px solid var(--umber);
+            background: var(--card)
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5l5-5' stroke='%238d4623' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
+                no-repeat right 13px center;
+            color: var(--umber);
+            font-family: inherit;
+            font-size: 0.9375rem;
+        }
+
+        #start-btn {
+            width: 100%;
+            min-height: 60px;
+            margin-top: 22px;
+            border-radius: 4px;
+            border: 1.5px solid var(--umber);
+            background: var(--clay);
+            color: var(--paper);
+            font-family: var(--display);
+            font-size: 1.375rem;
+            font-weight: 900;
+            font-style: italic;
+            letter-spacing: 0.01em;
+            box-shadow: 6px 6px 0 var(--umber);
+            transition: transform 140ms var(--ease), box-shadow 140ms var(--ease);
+        }
+        /* Presses into the page, the shadow collapsing under it. */
+        #start-btn:active {
+            transform: translate(6px, 6px);
+            box-shadow: 0 0 0 var(--umber);
+        }
+
+        #setup-error {
+            margin: 14px 0 0;
+            text-align: center;
+            padding: 12px 14px;
+            border-radius: 13px;
+            background: oklch(63% 0.21 25 / 0.1);
+            border: 1px solid oklch(63% 0.21 25 / 0.28);
+            color: oklch(45% 0.16 28);
+            font-size: 0.875rem;
+            line-height: 1.45;
+        }
+
+        details {
+            margin-top: 22px;
+            text-align: center;
+            font-size: 0.8125rem;
+            color: oklch(48% 0.035 50);
+        }
+        details summary {
+            cursor: pointer;
+            font-weight: 550;
+            color: var(--clay);
+            padding: 6px 0;
+        }
+        /* The list itself stays ranged left. Centred bullets are hard to read. */
+        details ul {
+            display: inline-block;
+            text-align: left;
+            margin: 6px 0 0;
+            padding-left: 18px;
+            line-height: 1.75;
+        }
+
+        /* ============================================================
+           Prompter
+           ============================================================ */
+        #prompter {
+            position: fixed;
+            inset: 0;
+            height: 100dvh;
+        }
+
+        #camera {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+        .mirrored { transform: scaleX(-1); }
+
+        #script-view {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            overflow: hidden;
+            background: oklch(12% 0.008 265 / var(--shade));
+            /* Fade the text out at both edges instead of drawing a hard rule.
+               The eye settles on the sharp band near the top, by the lens,
+               without being told to. */
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 44%, transparent 68%);
+                    mask-image: linear-gradient(to bottom, transparent 0%, #000 5%, #000 44%, transparent 68%);
+        }
+
+        #script-text {
+            padding: 10dvh 6vw 80dvh;
+            text-align: center;
+            font-size: var(--font-size);
+            font-weight: 600;
+            line-height: 1.45;
+            /* Positive tracking and a real word gap: this is read at arm's
+               length, not set as display type. */
+            letter-spacing: 0.005em;
+            word-spacing: 0.08em;
+            /* A scrim on the glyphs themselves. Buys contrast over a bright
+               window without having to dim the user's own face preview. */
+            text-shadow: 0 1px 2px oklch(8% 0.008 265 / 0.85), 0 0 14px oklch(8% 0.008 265 / 0.55);
+            will-change: transform;
+        }
+
+        /* One block per typed line, so the writer's phrasing survives.
+           Deliberately NOT positioned: the scroll loop reads each word's
+           offsetTop, and a positioned line would make that offset relative to
+           the line instead of the whole script, aiming the scroll at nothing. */
+        .line { margin: 0 0 0.18em; }
+        .line.blank { height: 0.75em; margin: 0; }
+
+        .word {
+            /* Plain inline, deliberately. An inline-block is an atomic unit to
+               the bidi algorithm, so in a Hebrew line every English word became
+               its own island and "Prompt Me" came out as "Me Prompt". Leaving
+               the words inline lets the browser resolve runs across them, which
+               is the one thing it is genuinely good at. The line's own dir sets
+               the paragraph direction. */
+            display: inline;
+            /* No margin: a real space text node already sits between words, and
+               doubling it left every centred line fractionally off axis. */
+            margin: 0;
+            color: var(--bone-dim);
+            transition: color 260ms var(--ease);
+        }
+        .word.said { color: var(--bone-faint); }
+        .word.current { color: var(--bone); }
+
+        /* Readers track a prompter by line, not by word. Lifting the whole
+           current line gives a much larger target than one brighter word. */
+        .line:has(.word.current) .word.said { color: var(--bone-dim); }
+
+        /* ============================================================
+           Overlays
+           ============================================================ */
+        #countdown {
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28dvh;
+            font-weight: 300;
+            letter-spacing: -0.05em;
+            color: var(--bone);
+            background: oklch(12% 0.008 265 / 0.5);
+            pointer-events: none;
+        }
+        #countdown span { animation: countPulse 1s var(--ease); }
+        @keyframes countPulse {
+            from { opacity: 0; transform: scale(1.25); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+
+        #pause-flash {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            width: 96px; height: 96px;
+            border-radius: 50%;
+            background: oklch(12% 0.008 265 / 0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            animation: flashOut 700ms var(--ease) forwards;
+        }
+        @keyframes flashOut {
+            from { opacity: 1; transform: translate(-50%, -50%) scale(0.85); }
+            to   { opacity: 0; transform: translate(-50%, -50%) scale(1.15); }
+        }
+
+        /* Doubles as the pause control: it is already where the eye goes to
+           check the recording, and it keeps the bottom bar down to four targets. */
+        #rec-dot {
+            position: absolute;
+            top: calc(14px + env(safe-area-inset-top));
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 44px;
+            padding: 7px 15px 7px 13px;
+            border-radius: 999px;
+            background: oklch(12% 0.008 265 / 0.72);
+            color: var(--bone);
+            font-size: 0.8125rem;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.01em;
+        }
+        #rec-dot::before {
+            content: "";
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--rec);
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+        #rec-dot[data-paused="true"]::before { animation: none; opacity: 0.4; }
+        #rec-dot svg { width: 15px; height: 15px; opacity: 0.75; }
+        @keyframes pulse { 50% { opacity: 0.25; } }
+
+        /* Sits over live script text, so it needs its own ground to stay legible. */
+        #status {
+            position: absolute;
+            bottom: calc(118px + env(safe-area-inset-bottom));
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 4;
+            width: max-content;
+            max-width: calc(100% - 48px);
+            padding: 9px 16px;
+            border-radius: 999px;
+            background: oklch(10% 0.008 265 / 0.82);
+            text-align: center;
+            font-size: 0.8125rem;
+            line-height: 1.4;
+            color: var(--bone);
+            pointer-events: none;
+        }
+        #status:empty { display: none; }
+        /* Only clickable when it is offering to save an unsaved take. */
+        #status.actionable {
+            pointer-events: auto;
+            cursor: pointer;
+            background: var(--bone);
+            color: var(--ink);
+            font-weight: 550;
+        }
+
+        #progress {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 2px;
+            z-index: 5;
+            background: oklch(97% 0.004 85 / 0.1);
+        }
+        #progress-bar {
+            width: 0;
+            height: 100%;
+            background: var(--bone);
+            transition: width 400ms var(--ease);
+        }
+
+        /* ============================================================
+           Controls: three targets, auto-hiding
+           ============================================================ */
+        #controls {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            z-index: 4;
+            /* Three slots so the record button sits dead on the centre axis.
+               space-between across four children pushed it 40px to the right. */
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            max-width: 30rem;
+            margin: 0 auto;
+            padding: 20px 32px calc(20px + env(safe-area-inset-bottom));
+            background: linear-gradient(to top, oklch(12% 0.008 265 / 0.85), transparent);
+            transition: opacity 400ms var(--ease), transform 400ms var(--ease);
+        }
+        .ctl-group { display: flex; align-items: center; gap: 14px; }
+        .ctl-group--start { justify-self: start; }
+        .ctl-group--end { justify-self: end; }
+
+        .ctl {
+            width: 48px; height: 48px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: oklch(97% 0.004 85 / 0.14);
+            color: var(--bone);
+            transition: background 200ms var(--ease), transform 200ms var(--ease);
+        }
+        .ctl:active { transform: scale(0.92); }
+        .ctl svg { width: 22px; height: 22px; display: block; }
+        /* Mirror is a persistent state, so it reads as filled when on, the same
+           language the settings toggles use. Still no hue involved. */
+        #mirror-toggle[aria-pressed="true"] { background: var(--bone); color: var(--ink); }
+
+        /* Without this, keyboard focus falls back to the UA ring, which renders
+           as an orange outline on the one screen that must cast no colour. */
+        :where(#prompter) :focus-visible {
+            outline: 2px solid var(--bone);
+            outline-offset: 3px;
+        }
+        :where(#setup) :focus-visible {
+            outline: 2px solid var(--clay);
+            outline-offset: 2px;
+        }
+
+        /* The record button is the one thing that should read instantly. */
+        #record-btn {
+            width: 68px; height: 68px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: none;
+            border: 3px solid var(--bone);
+            transition: transform 200ms var(--ease);
+        }
+        #record-btn:active { transform: scale(0.94); }
+        #record-btn::after {
+            content: "";
+            width: 50px; height: 50px;
+            border-radius: 50%;
+            background: var(--rec);
+            transition: width 260ms var(--ease), height 260ms var(--ease), border-radius 260ms var(--ease);
+        }
+        #record-btn[aria-pressed="true"]::after {
+            width: 26px; height: 26px;
+            border-radius: 7px;
+        }
+        #record-btn:disabled { opacity: 0.3; }
+
+        /* ============================================================
+           Settings sheet
+           ============================================================ */
+        #sheet {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            z-index: 7;
+            max-width: 34rem;
+            margin: 0 auto;
+            padding: 10px 24px calc(24px + env(safe-area-inset-bottom));
+            background: oklch(14% 0.008 265 / 0.94);
+            backdrop-filter: blur(20px);
+            border-radius: 24px 24px 0 0;
+            transform: translateY(0);
+            transition: transform 380ms var(--ease);
+        }
+        /* Kept in the layout so it can slide, but genuinely hidden from
+           pointers and assistive tech while closed. */
+        #sheet[hidden] {
+            display: block !important;
+            transform: translateY(101%);
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .grabber {
+            width: 36px; height: 4px;
+            border-radius: 2px;
+            background: oklch(97% 0.004 85 / 0.25);
+            margin: 0 auto 18px;
+        }
+
+        .sheet-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 11px 0;
+            font-size: 0.9375rem;
+            color: var(--bone-dim);
+        }
+        .sheet-row + .sheet-row { border-top: 1px solid oklch(97% 0.004 85 / 0.07); }
+
+        .toggle {
+            min-width: 62px;
+            padding: 8px 16px;
+            border-radius: 999px;
+            background: oklch(97% 0.004 85 / 0.12);
+            color: var(--bone-dim);
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background 200ms var(--ease), color 200ms var(--ease);
+        }
+        /* Active state is a filled bone pill. No hue required to say "on". */
+        .toggle[aria-pressed="true"] { background: var(--bone); color: var(--ink); }
+        .toggle:disabled { opacity: 0.35; }
+
+        .sheet-select {
+            appearance: none;
+            padding: 8px 32px 8px 12px;
+            border-radius: 999px;
+            border: none;
+            background: oklch(97% 0.004 85 / 0.12)
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5l5-5' stroke='%23f5f2ec' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E")
+                no-repeat right 12px center;
+            color: var(--bone);
+            font-family: inherit;
+            font-size: 0.875rem;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 58%;
+            height: 28px;
+            background: none;
+        }
+        input[type="range"]::-webkit-slider-runnable-track {
+            height: 3px;
+            border-radius: 2px;
+            background: oklch(97% 0.004 85 / 0.2);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px; height: 20px;
+            margin-top: -8.5px;
+            border-radius: 50%;
+            background: var(--bone);
+        }
+        input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px; background: oklch(97% 0.004 85 / 0.2); }
+        input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: none; border-radius: 50%; background: var(--bone); }
+
+        .sheet-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+        }
+        .sheet-actions button {
+            flex: 1;
+            min-height: 46px;
+            border-radius: 13px;
+            background: oklch(97% 0.004 85 / 0.12);
+            font-size: 0.9375rem;
+        }
+        #back-btn { background: none; border: 1px solid oklch(97% 0.004 85 / 0.16); }
+
+        #scrim {
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            background: oklch(8% 0.008 265 / 0.4);
+        }
+
+        /* ============================================================
+           Review. The camera is already off by the time this appears,
+           so the take is the only thing on screen.
+           ============================================================ */
+        #review {
+            position: absolute;
+            inset: 0;
+            z-index: 8;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: calc(18px + env(safe-area-inset-top)) 22px calc(18px + env(safe-area-inset-bottom));
+            background: var(--ink);
+        }
+
+        .review-slate {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+            font-size: 0.6875rem;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--bone-faint);
+        }
+        .review-slate .take {
+            padding: 3px 9px;
+            border: 1px solid oklch(97% 0.004 85 / 0.28);
+            border-radius: 4px;
+            color: var(--bone);
+            font-variant-numeric: tabular-nums;
+        }
+        .review-slate .spacer {
+            flex: 1;
+            border-top: 1px dashed oklch(97% 0.004 85 / 0.22);
+        }
+        #review-length { font-variant-numeric: tabular-nums; }
+
+        .review-stage {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            place-items: center;
+            background: oklch(8% 0.008 265);
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        #review-video {
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+        }
+        /* The whole frame is a play/pause target, the way a phone player works. */
+        #review-tap {
+            position: absolute;
+            inset: 0;
+            background: none;
+        }
+
+        .player { display: flex; flex-direction: column; gap: 8px; }
+
+        #review-seek {
+            width: 100%;
+            height: 24px;
+        }
+        #review-seek::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 2px;
+            background: linear-gradient(to right, var(--bone) var(--played, 0%), oklch(97% 0.004 85 / 0.2) var(--played, 0%));
+        }
+        #review-seek::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            margin-top: -6px;
+            border-radius: 50%;
+            background: var(--bone);
+        }
+        #review-seek::-moz-range-track { height: 4px; border-radius: 2px; background: oklch(97% 0.004 85 / 0.2); }
+        #review-seek::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--bone); }
+        #review-seek::-moz-range-thumb { width: 16px; height: 16px; border: none; border-radius: 50%; background: var(--bone); }
+
+        .player-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .player-btn {
+            position: relative;
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: oklch(97% 0.004 85 / 0.12);
+            color: var(--bone);
+        }
+        .player-btn svg { width: 20px; height: 20px; }
+        /* The "5" sits inside the rewind arrow. */
+        #review-back span {
+            position: absolute;
+            font-size: 0.5rem;
+            font-weight: 700;
+            transform: translateY(1.5px);
+        }
+        .player-btn.play {
+            width: 52px; height: 52px;
+            background: var(--bone);
+            color: var(--ink);
+        }
+        .player-btn.play svg { width: 22px; height: 22px; }
+
+        #review-time {
+            margin-inline-start: auto;
+            font-size: 0.8125rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--bone-dim);
+        }
+
+        #review-note {
+            margin: 0;
+            text-align: center;
+            font-size: 0.8125rem;
+            line-height: 1.45;
+            color: var(--bone-dim);
+        }
+
+        .review-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .review-actions button {
+            min-height: 50px;
+            border-radius: 13px;
+            background: oklch(97% 0.004 85 / 0.12);
+            color: var(--bone);
+            font-size: 0.9375rem;
+            font-weight: 500;
+            transition: transform 160ms var(--ease);
+        }
+        .review-actions button:active { transform: scale(0.98); }
+        .review-actions .primary {
+            grid-column: 1 / -1;
+            background: var(--bone);
+            color: var(--ink);
+            font-weight: 600;
+        }
+        #discard-take { color: var(--bone-dim); background: none; border: 1px solid oklch(97% 0.004 85 / 0.16); }
+
+        @media (prefers-reduced-motion: reduce) {
+            * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <section id="setup">
+        <header class="masthead">
+            <p class="slate">
+                <span class="take">Take 01</span>
+                <span class="spacer"></span>
+                <span>Teleprompter</span>
+            </p>
+            <h1 class="wordmark">Prompt <em>Me</em></h1>
+            <p class="lede">Your script, over your camera. Read it while looking straight down the lens.</p>
+        </header>
+
+        <div class="sheet-inner composer">
+            <p id="setup-note" hidden></p>
+            <div>
+                <span class="label">The script</span>
+                <textarea id="script-input" dir="auto" placeholder="Paste your script"></textarea>
+            </div>
+
+            <div class="meta-row">
+                <span id="read-time">No script yet</span>
+                <button id="sample-btn" type="button">Try a sample</button>
+            </div>
+
+            <div class="field">
+                <label for="lang-select">Language</label>
+                <select id="lang-select">
+                <option value="en-US">English</option>
+                <option value="he-IL">עברית</option>
+                <option value="es-ES">Español</option>
+                <option value="fr-FR">Français</option>
+                <option value="pt-BR">Português</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="ar-SA">العربية</option>
+                    <option value="ru-RU">Русский</option>
+                </select>
+            </div>
+
+            <button id="start-btn">Start</button>
+            <p id="setup-error" hidden></p>
+
+            <details>
+                <summary>Before you start</summary>
+                <ul>
+                    <li>Use Chrome for voice pacing. Other browsers fall back to steady scrolling.</li>
+                    <li>Camera and microphone permission is needed.</li>
+                    <li>Speech is transcribed by Google, so voice pacing needs a connection.</li>
+                    <li>Your video is never uploaded. It stays on this device.</li>
+                </ul>
+            </details>
+        </div>
+    </section>
+
+    <section id="prompter" hidden>
+        <video id="camera" autoplay muted playsinline></video>
+
+        <div id="script-view">
+            <div id="script-text" dir="auto"></div>
+        </div>
+
+        <div id="progress"><div id="progress-bar"></div></div>
+
+        <button id="rec-dot" hidden aria-label="Pause recording">
+            <span id="rec-time">0:00</span>
+            <svg id="rec-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>
+            </svg>
+        </button>
+        <div id="status" role="status" aria-live="polite"></div>
+        <div id="countdown" hidden></div>
+
+        <div id="controls">
+          <div class="ctl-group ctl-group--start">
+            <button id="play-pause" class="ctl" aria-label="Pause scrolling" aria-pressed="false">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>
+                </svg>
+            </button>
+
+            <button id="mirror-toggle" class="ctl" aria-label="Mirror the camera" aria-pressed="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 3v18" stroke-dasharray="2.5 2.5"/>
+                    <path d="M8.5 8 4 12l4.5 4"/><path d="m15.5 8 4.5 4-4.5 4"/>
+                </svg>
+            </button>
+          </div>
+
+            <button id="record-btn" aria-label="Start recording" aria-pressed="false"></button>
+
+          <div class="ctl-group ctl-group--end">
+            <button id="restart-btn" class="ctl" aria-label="Back to the top of the script">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 6v12"/><path d="M9 12l9-6v12l-9-6Z" fill="currentColor"/>
+                </svg>
+            </button>
+
+            <button id="settings-btn" class="ctl" aria-label="Settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                    <path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/>
+                </svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="scrim" hidden></div>
+
+        <section id="review" hidden>
+            <p class="review-slate">
+                <span class="take" id="review-take">Take 01</span>
+                <span class="spacer"></span>
+                <span id="review-length">0:00</span>
+            </p>
+            <div class="review-stage">
+                <video id="review-video" playsinline></video>
+                <button id="review-tap" aria-label="Play or pause"></button>
+            </div>
+
+            <div class="player">
+                <input id="review-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Scrub through the take">
+                <div class="player-row">
+                    <button id="review-back" class="player-btn" aria-label="Back five seconds">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M11 5 6 9l5 4"/><path d="M6 9h7a5 5 0 0 1 0 10h-3"/>
+                        </svg>
+                        <span>5</span>
+                    </button>
+                    <button id="review-play" class="player-btn play" aria-label="Play"></button>
+                    <button id="review-restart" class="player-btn" aria-label="Back to the start">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M6 6v12"/><path d="M9 12l9-6v12l-9-6Z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <span id="review-time">0:00 / 0:00</span>
+                </div>
+            </div>
+            <p id="review-note">Check it before you keep it. Nothing has been saved yet.</p>
+            <div class="review-actions">
+                <button id="save-take" class="primary">Save to my phone</button>
+                <button id="retake">Shoot it again</button>
+                <button id="discard-take">Discard</button>
+            </div>
+        </section>
+
+        <div id="sheet" hidden role="dialog" aria-label="Settings">
+            <div class="grabber"></div>
+
+            <div class="sheet-row">
+                <label for="speed-range">Speed</label>
+                <input id="speed-range" type="range" min="0.2" max="3" step="0.1" value="1">
+            </div>
+            <div class="sheet-row">
+                <label for="font-range">Text size</label>
+                <input id="font-range" type="range" min="18" max="72" step="2" value="34">
+            </div>
+            <div class="sheet-row">
+                <label for="opacity-range">Dimming</label>
+                <input id="opacity-range" type="range" min="0" max="0.9" step="0.05" value="0.45">
+            </div>
+            <div class="sheet-row">
+                <span>Follow my voice</span>
+                <button id="voice-toggle" class="toggle" aria-pressed="true">On</button>
+            </div>
+            <div class="sheet-row">
+                <label for="sheet-lang">Language</label>
+                <select id="sheet-lang" class="sheet-select">
+                    <option value="en-US">English</option>
+                    <option value="he-IL">עברית</option>
+                    <option value="es-ES">Español</option>
+                    <option value="fr-FR">Français</option>
+                    <option value="pt-BR">Português</option>
+                    <option value="de-DE">Deutsch</option>
+                    <option value="ar-SA">العربية</option>
+                    <option value="ru-RU">Русский</option>
+                </select>
+            </div>
+            <div class="sheet-row">
+                <span>Screen stays awake</span>
+                <span id="awake-state">Checking</span>
+            </div>
+
+            <div class="sheet-actions">
+                <button id="back-btn">Edit script</button>
+            </div>
+        </div>
+    </section>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

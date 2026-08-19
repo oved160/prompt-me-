@@ -1,0 +1,11 @@
+{
+  "name": "prompt-me",
+  "version": "1.0.0",
+  "description": "A voice-controlled teleprompter that runs entirely in the browser.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "dev": "npx --yes serve ."
+  }
+}
