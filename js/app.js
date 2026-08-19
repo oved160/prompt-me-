@@ -4,6 +4,7 @@ import { Recorder, saveRecording, pickMimeType } from './recorder.js';
 import { stepScroll, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
+import { SpeechActivity, rmsOf } from './voicelevel.js';
 
 const STORE_KEY = 'prompt-me';
 
@@ -51,6 +52,11 @@ let voiceHeard = 0;       // phrases the recogniser has actually returned
 let voicePreferred = true; // the user's own choice, persisted
 let lastHeardAt = 0;      // when the recogniser last returned anything
 let voiceLogStart = 0;
+let levelContext = null;   // Web Audio graph reading the recording's own audio
+let levelAnalyser = null;
+let levelBuffer = null;
+let levelPacing = false;
+const levelDetector = new SpeechActivity();
 
 const dom = {};
 for (const id of [
@@ -234,21 +240,66 @@ function paintHearing() {
  * whole session the way it used to be.
  */
 async function acquireMicForRecording() {
-    if (isVoiceMode) {
-        setVoice(false);
-        showStatus('Recording — reading at a steady pace so the microphone stays free for your audio.');
-    }
+    const wantedVoice = isVoiceMode;
+    if (isVoiceMode) setVoice(false);
+
     try {
         const mic = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
         });
         mic.getAudioTracks().forEach(t => stream.addTrack(t));
+        // Word matching is gone for the take, but the recording's own audio can
+        // still say when the reader is talking, which is enough to keep pace.
+        if (wantedVoice) startLevelPacing(mic);
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
         showStatus('Recording without sound: the microphone could not be opened.');
         return false;
     }
+}
+
+/**
+ * Listens to the loudness of the recording's audio and reports whether the
+ * reader is speaking. The scroll loop uses it to advance only while there is a
+ * voice, which is as close to voice pacing as is possible while a recording
+ * owns the microphone.
+ */
+function startLevelPacing(micStream) {
+    stopLevelPacing();
+    try {
+        levelContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = levelContext.createMediaStreamSource(micStream);
+        levelAnalyser = levelContext.createAnalyser();
+        levelAnalyser.fftSize = 1024;
+        levelAnalyser.smoothingTimeConstant = 0.4;
+        source.connect(levelAnalyser);
+        levelBuffer = new Float32Array(levelAnalyser.fftSize);
+        levelDetector.reset();
+        levelPacing = true;
+        showStatus('Following your voice by sound while recording.');
+    } catch {
+        // No Web Audio: fall back to the steady speed rather than freezing.
+        levelPacing = false;
+        showStatus('Recording — the script scrolls at a steady speed.');
+    }
+}
+
+function stopLevelPacing() {
+    levelPacing = false;
+    levelAnalyser = null;
+    levelBuffer = null;
+    if (levelContext) {
+        levelContext.close().catch(() => {});
+        levelContext = null;
+    }
+}
+
+/** True when the reader is audibly speaking. Cheap enough to call every frame. */
+function readerIsSpeaking() {
+    if (!levelPacing || !levelAnalyser || !levelBuffer) return true;
+    levelAnalyser.getFloatTimeDomainData(levelBuffer);
+    return levelDetector.update(rmsOf(levelBuffer), performance.now());
 }
 
 function paintVoiceState() {
@@ -405,6 +456,10 @@ function updateReadTime() {
  * Opens the camera and mic. Returns false and explains itself if it cannot,
  * leaving the caller on whatever screen it was on.
  */
+function portraitCapture() {
+    return window.innerHeight >= window.innerWidth;
+}
+
 async function openCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -414,12 +469,13 @@ async function openCamera() {
             // seconds, and never hears a word, for as long as that track is
             // open. Audio is requested only for the few seconds a recording
             // actually needs it, in acquireMicForRecording().
-            video: {
-                facingMode: 'user',
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                frameRate: { ideal: 30 },
-            },
+            // Match the capture to the way the phone is being held. Asking for
+            // 1920x1080 on a phone held upright records a landscape frame while
+            // the preview is cropped to fill a portrait screen, so what you
+            // framed up is not what comes out.
+            video: portraitCapture()
+                ? { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }
+                : { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
         });
         dom['camera'].srcObject = stream;
         return true;
@@ -440,6 +496,7 @@ async function openCamera() {
  * The script and its position are left alone so a retake can pick them up.
  */
 function closeCamera() {
+    stopLevelPacing();
     setVoice(false);
     listener = null;
     clearInterval(stallTimer);
@@ -592,7 +649,9 @@ function scrollLoop(now) {
     const lastSpan = wordSpans[wordSpans.length - 1];
     scrollPosition = stepScroll(scrollPosition, {
         dt,
-        paused: isPaused,
+        // While a recording owns the microphone, pace on whether a voice is
+        // audible instead of scrolling on regardless.
+        paused: isPaused || (levelPacing && !readerIsSpeaking()),
         voiceMode: isVoiceMode,
         speed: parseFloat(dom['speed-range'].value),
         wordTop: currentSpan ? currentSpan.offsetTop : null,
@@ -971,6 +1030,7 @@ function toggleRecordingPause() {
 }
 
 async function finishRecording() {
+    stopLevelPacing();
     // Read the clock before stopping: an inactive recorder reports zero.
     const elapsed = recorder.elapsedMs;
     const blob = await recorder.stop();
