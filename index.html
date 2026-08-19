@@ -290,6 +290,17 @@
             letter-spacing: 0.04em;
             font-variant-numeric: tabular-nums;
         }
+        #clear-btn {
+            color: oklch(48% 0.035 50);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            text-decoration: underline;
+            text-underline-offset: 4px;
+            padding: 4px 0;
+        }
+
         #sample-btn {
             color: var(--clay);
             font-size: 0.75rem;
@@ -324,6 +335,18 @@
             color: var(--umber);
             font-family: inherit;
             font-size: 0.9375rem;
+        }
+
+        /* Deliberately above the Start button and never collapsed: this is the
+           one thing a privacy-minded reader needs before granting the mic. */
+        .disclosure {
+            margin: 20px 0 0;
+            padding-inline-start: 12px;
+            border-inline-start: 2px solid var(--clay);
+            text-align: start;
+            font-size: 0.8125rem;
+            line-height: 1.5;
+            color: oklch(42% 0.05 45);
         }
 
         #start-btn {
@@ -936,6 +959,7 @@
             <div class="meta-row">
                 <span id="read-time">No script yet</span>
                 <button id="sample-btn" type="button">Try a sample</button>
+                <button id="clear-btn" type="button">Clear</button>
             </div>
 
             <div class="field">
@@ -952,13 +976,21 @@
                 </select>
             </div>
 
+            <p class="disclosure">
+                Voice pacing sends your microphone audio to Google to be transcribed. Turn it
+                off in settings to keep everything on this device. Your video never leaves it
+                either way.
+            </p>
+
             <button id="start-btn">Start</button>
             <p id="setup-error" hidden></p>
 
             <details>
                 <summary>Before you start</summary>
                 <ul>
-                    <li>Use Chrome for voice pacing. Other browsers fall back to steady scrolling.</li>
+                    <li>Voice pacing needs Chrome on Android or a computer. On iPhone every browser
+                        uses Safari's engine, where it does not run, so the script scrolls at a
+                        steady speed instead.</li>
                     <li>Camera and microphone permission is needed.</li>
                     <li>Speech is transcribed by Google, so voice pacing needs a connection.</li>
                     <li>Your video is never uploaded. It stays on this device.</li>
@@ -1088,6 +1120,10 @@
                     <option value="ar-SA">العربية</option>
                     <option value="ru-RU">Русский</option>
                 </select>
+            </div>
+            <div class="sheet-row">
+                <span>Voice tracking</span>
+                <span id="voice-state">Off</span>
             </div>
             <div class="sheet-row">
                 <span>Screen stays awake</span>

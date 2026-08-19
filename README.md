@@ -87,8 +87,10 @@ npm test
   app reclaims it on the way back and on any tap, and reports the live state under
   Settings ("Screen stays awake"), so a phone that keeps dimming can be diagnosed rather
   than guessed at.
-- **Your script stays in browser storage** until you replace it. On a shared device, clear
-  the site data to remove it.
+- **Your script stays in browser storage** until you replace it, so that it survives a
+  refresh. On a shared device use the Clear button on the home screen, which erases the
+  script and every saved setting.
+- **Turning voice pacing off is remembered.** With it off, nothing at all leaves the device.
 - **Recordings are held in memory** for review and are never written to disk on their own, so
   a very long take on a phone with little free memory can be lost to the browser reclaiming
   the tab. Discarding or leaving the review screen releases the take immediately.

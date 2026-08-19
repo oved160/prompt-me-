@@ -6,6 +6,16 @@ import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
 
 const STORE_KEY = 'prompt-me';
+
+/**
+ * Every browser on iOS is WebKit underneath, Chrome included, and Web Speech is
+ * either missing or too unreliable to pace a script there. Worth naming: the
+ * API can appear to exist and then simply never return a result.
+ */
+// User agent only. The usual "MacIntel plus touch points" trick for spotting an
+// iPad also flags any touch-capable Mac, and telling a desktop user their
+// iPhone is the problem is worse than missing an iPad.
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent);
 const WORDS_PER_MINUTE = 140;
 
 const SAMPLE = `Hey, quick one. I used to spend my whole evening editing a two minute video, and most of that was just cutting out the parts where I lost my place.
@@ -35,14 +45,19 @@ let pendingTakeMs = 0;
 let takesShot = 0;        // attempts rolled, kept or not, the way a slate counts
 let currentTake = 0;      // the number on the take being shot or reviewed
 let reviewDuration = 0;   // seconds, resolved for the review player
+let voiceState = 'idle';  // last state reported by the recogniser
+let voiceError = '';
+let voiceHeard = 0;       // phrases the recogniser has actually returned
+let voicePreferred = true; // the user's own choice, persisted
 
 const dom = {};
 for (const id of [
     'setup', 'script-input', 'lang-select', 'start-btn', 'setup-error', 'setup-note',
-    'read-time', 'sample-btn',
+    'read-time', 'sample-btn', 'clear-btn',
     'prompter', 'camera', 'script-view', 'script-text', 'countdown',
     'rec-dot', 'rec-time', 'status', 'progress-bar', 'controls',
     'record-btn', 'rec-icon', 'play-pause', 'settings-btn', 'sheet', 'scrim', 'awake-state',
+    'voice-state',
     'review', 'review-take', 'review-length', 'review-video', 'review-note', 'review-tap',
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
     'save-take', 'retake', 'discard-take',
@@ -66,6 +81,15 @@ function init() {
         updateReadTime();
         dom['script-input'].focus();
     });
+    // The script otherwise sits in browser storage forever. On a shared or
+    // borrowed phone, whatever was last written stays readable to the next person.
+    dom['clear-btn'].addEventListener('click', () => {
+        dom['script-input'].value = '';
+        try { localStorage.removeItem(STORE_KEY); } catch { /* private mode */ }
+        updateReadTime();
+        dom['setup-note'].hidden = true;
+        dom['script-input'].focus();
+    });
     dom['start-btn'].addEventListener('click', startApp);
 
     dom['play-pause'].addEventListener('click', () => {
@@ -81,7 +105,7 @@ function init() {
     dom['discard-take'].addEventListener('click', () => { discardTake(); leaveShoot(''); });
     dom['scrim'].addEventListener('click', () => openSheet(false));
 
-    dom['voice-toggle'].addEventListener('click', () => setVoice(!isVoiceMode));
+    dom['voice-toggle'].addEventListener('click', () => setVoice(!isVoiceMode, true));
     dom['mirror-toggle'].addEventListener('click', toggleMirror);
     dom['restart-btn'].addEventListener('click', restart);
     dom['back-btn'].addEventListener('click', goBack);
@@ -162,6 +186,35 @@ function init() {
  * annoying failure this app can have. The lock is dropped by the browser
  * whenever the page is hidden, so it has to be reclaimed on the way back.
  */
+/**
+ * A phone cannot be attached to a debugger mid-take, so the app has to be able
+ * to say what the recogniser is actually doing. "Heard N" separates the two
+ * failure modes that look identical from the outside: a recogniser that never
+ * started, and one that is running but whose words are not matching the script.
+ */
+function paintVoiceState() {
+    if (!dom['voice-state']) return;
+
+    // Report intent, not the recogniser's momentary state. Opening this very
+    // sheet pauses the script, which stops the recogniser, so reading the raw
+    // state here would always say "off" no matter what was happening.
+    let label;
+    if (!isSpeechSupported) label = 'Not available in this browser';
+    else if (!isVoiceMode) label = 'Off';
+    else if (isPaused) label = 'Paused';
+    else if (voiceState === 'restarting') label = 'Reconnecting';
+    else if (voiceState === 'listening') label = 'Listening';
+    else label = 'Starting';
+
+    const parts = [label];
+    if (voiceHeard) parts.push(`heard ${voiceHeard}`);
+    // The last failure is sticky. It used to be overwritten a moment later by
+    // the "stopped" that always follows an error, hiding the actual cause.
+    if (voiceError) parts.push(voiceError);
+    else if (!voiceHeard && IS_IOS) parts.push('iPhone, limited');
+    dom['voice-state'].textContent = parts.join(' · ');
+}
+
 function setAwakeState(state) {
     const labels = {
         on: 'On',
@@ -232,6 +285,7 @@ function restorePreferences() {
     if (saved.shade) dom['opacity-range'].value = saved.shade;
     if (saved.speed) dom['speed-range'].value = saved.speed;
     setMirror(saved.mirror !== false); // default on
+    voicePreferred = saved.voice !== false; // default on
     takesShot = Number.isFinite(saved.takes) ? saved.takes : 0;
     paintTakeNumber();
 }
@@ -260,6 +314,7 @@ function savePreferences() {
             shade: dom['opacity-range'].value,
             speed: dom['speed-range'].value,
             mirror: dom['camera'].classList.contains('mirrored'),
+            voice: voicePreferred,
             takes: takesShot,
         }));
     } catch {
@@ -357,6 +412,10 @@ async function startApp() {
     // appears means they are already behind before they have drawn breath.
     hasStarted = false;
     resetTranscript();
+    voiceHeard = 0;
+    voiceError = '';
+    voiceState = 'idle';
+    paintVoiceState();
     setPaused(true, true);
     showStatus('Tap anywhere to begin');
     acquireWakeLock();
@@ -366,6 +425,20 @@ async function beginReading() {
     if (hasStarted) return;
     hasStarted = true;
     showStatus('');
+
+    // Start listening inside the tap that triggered this, BEFORE the countdown.
+    // Browsers only allow speech recognition to start while a user gesture is
+    // still in scope, and awaiting three seconds of countdown first throws that
+    // away. Nobody is speaking during the countdown, so nothing is lost.
+    // Honour a deliberate "off". Forcing voice back on every take would put the
+    // microphone back on Google's servers for someone who switched it off
+    // precisely to stop that.
+    if (isSpeechSupported && voicePreferred) {
+        setVoice(true);
+    } else if (!isSpeechSupported) {
+        showStatus('Voice pacing needs Chrome on Android or a desktop. Scrolling at a steady speed.');
+    }
+
     await runCountdown();
 
     // The reader can back out during the countdown. Without this the app would
@@ -373,12 +446,7 @@ async function beginReading() {
     if (dom['prompter'].hidden) return;
 
     setPaused(false, true);
-
-    if (isSpeechSupported) {
-        setVoice(true);
-    } else {
-        showStatus('Voice pacing needs Chrome. Scrolling at a steady speed.');
-    }
+    lastAdvanceAt = performance.now(); // don't count the countdown as a stall
 }
 
 function buildScript(text) {
@@ -480,25 +548,51 @@ function setupVoice() {
     listener = new SpeechListener({
         lang: dom['lang-select'].value,
         onResult: ({ finalText, interimText }) => {
+            // Counted even while paused: it is the proof that the microphone and
+            // the recogniser are alive, which is the first thing to establish
+            // when someone reports that voice tracking "does not work".
+            voiceHeard += 1;
+            voiceError = ''; // words are arriving, so any earlier failure is stale
+            paintVoiceState();
             if (isPaused) return;
             handleTranscript(finalText, interimText);
         },
-        // Raw states only mean something while voice is on. Without this guard a
-        // trailing 'stopped' overwrites the error explaining why it died.
         onStatus: (state) => {
+            // Every state reaches the diagnostics, including the error codes the
+            // old handler silently dropped. A microphone that cannot be captured
+            // used to look identical to a script that simply was not moving.
+            voiceState = state;
+            // speech.js passes non-fatal codes through here as "error: <code>".
+            // Keep the code, it is the only clue to a microphone that will not open.
+            if (String(state).startsWith('error:')) {
+                voiceError = String(state).replace('error:', '').trim();
+            }
+            paintVoiceState();
             if (!isVoiceMode) return;
             const friendly = { listening: '', restarting: 'Reconnecting', stopped: '' };
             if (state in friendly) showStatus(friendly[state]);
         },
         onError: (message) => {
+            voiceState = 'error';
+            voiceError = message;
+            paintVoiceState();
             setVoice(false);
             showStatus(`${message} Scrolling at a steady speed instead.`);
         },
     });
 }
 
-function setVoice(on) {
+/**
+ * @param {boolean} on
+ * @param {boolean} [remember] true only when the user chose this themselves, so
+ *   that an error switching voice off does not permanently disable the feature.
+ */
+function setVoice(on, remember = false) {
     if (on && !isSpeechSupported) return;
+    if (remember) {
+        voicePreferred = on;
+        savePreferences();
+    }
     isVoiceMode = on;
     dom['voice-toggle'].setAttribute('aria-pressed', String(on));
     dom['voice-toggle'].textContent = on ? 'On' : 'Off';
@@ -567,7 +661,9 @@ function watchForStall() {
         if (dom['status'].dataset.stalled) return;
         if (performance.now() - lastAdvanceAt < 8000) return;
         dom['status'].dataset.stalled = '1';
-        showStatus('Not following your voice. Check the language in settings, or switch it off for steady scrolling.');
+        showStatus(IS_IOS && voiceHeard === 0
+            ? 'iPhone browsers cannot run voice tracking. Turn it off in settings and use the speed slider.'
+            : 'Not following your voice. Check the language in settings, or switch it off for steady scrolling.');
     }, 1000);
 }
 
@@ -982,8 +1078,11 @@ function stopAll() {
     isPaused = false;
     showStatus('');
     dom['rec-dot'].hidden = true;
-    dom['voice-toggle'].setAttribute('aria-pressed', String(isSpeechSupported));
-    dom['voice-toggle'].textContent = isSpeechSupported ? 'On' : 'Off';
+    // Reflect the user's own choice, not merely what the browser can do.
+    const willListen = isSpeechSupported && voicePreferred;
+    dom['voice-toggle'].setAttribute('aria-pressed', String(willListen));
+    dom['voice-toggle'].textContent = willListen ? 'On' : 'Off';
+    paintVoiceState();
 }
 
 init();
