@@ -1,3 +1,8 @@
+// A session that ran this long was working, not looping.
+const HEALTHY_SESSION_MS = 2000;
+const RESTART_BASE_MS = 250;
+const RESTART_MAX_MS = 4000;
+
 export const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
 export class SpeechListener {
@@ -9,7 +14,8 @@ export class SpeechListener {
 
     this._wantRunning = false;
     this._restartCount = 0;
-    this._firstRestartTime = 0;
+    this._sessionStart = 0;
+    this.restarts = 0; // exposed for diagnostics
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -76,32 +82,45 @@ export class SpeechListener {
     };
   }
 
+  /**
+   * Chrome ends a recognition session constantly on Android: after each
+   * utterance, after a pause, sometimes immediately. Restarting is the normal
+   * state of affairs, not an emergency.
+   *
+   * The previous guard counted restarts and gave up permanently after five in
+   * ten seconds, which a phone reaches within seconds of starting. Voice
+   * tracking would switch itself off almost immediately and never return.
+   *
+   * What actually needs guarding against is a *tight* loop: end firing
+   * instantly, over and over, which would spin the CPU. That is detectable by
+   * how long the session lasted, not by how many there were. A session with
+   * any real duration resets the backoff; only instant failures back off, and
+   * even then it keeps trying rather than abandoning the user.
+   */
   _handleAutoRestart() {
-    const now = Date.now();
-    
-    // Guard against restart storms: if the API crashes/stops repeatedly in a loop
-    if (now - this._firstRestartTime > 10000) {
-      this._firstRestartTime = now;
+    const lasted = Date.now() - this._sessionStart;
+
+    if (lasted > HEALTHY_SESSION_MS) {
       this._restartCount = 0;
+    } else {
+      this._restartCount++;
     }
 
-    this._restartCount++;
-
-    if (this._restartCount > 5) {
-      this._wantRunning = false;
-      this.onError?.('Too many automatic restarts. Stopping to prevent loop.');
-      this.onStatus?.('stopped');
-      return;
-    }
+    const delay = Math.min(
+      RESTART_BASE_MS * Math.pow(2, Math.max(0, this._restartCount - 1)),
+      RESTART_MAX_MS
+    );
 
     this.onStatus?.('restarting');
     setTimeout(() => {
       if (this._wantRunning) this.start();
-    }, 250);
+    }, delay);
   }
 
   start() {
     this._wantRunning = true;
+    this._sessionStart = Date.now();
+    this.restarts += 1;
     try {
       this.recognition.start();
     } catch (e) {

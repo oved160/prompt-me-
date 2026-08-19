@@ -233,9 +233,14 @@ function paintVoiceState() {
     else if (IS_IOS) label = 'Will not run on iPhone';
     else label = 'On, nothing heard yet';
 
+    const extras = [];
+    // A high restart count with nothing heard is the signature of a recogniser
+    // that keeps being handed the microphone and getting nothing from it.
+    if (!voiceHeard && listener && listener.restarts > 3) extras.push(`${listener.restarts} restarts`);
     // The last real failure is sticky. It used to be overwritten a moment later
     // by the "stopped" that always follows an error, hiding the actual cause.
-    dom['voice-state'].textContent = voiceError ? `${label} · ${voiceError}` : label;
+    if (voiceError) extras.push(voiceError);
+    dom['voice-state'].textContent = [label, ...extras].join(' · ');
 }
 
 function setAwakeState(state) {
