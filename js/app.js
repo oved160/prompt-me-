@@ -49,6 +49,7 @@ let voiceState = 'idle';  // last state reported by the recogniser
 let voiceError = '';
 let voiceHeard = 0;       // phrases the recogniser has actually returned
 let voicePreferred = true; // the user's own choice, persisted
+let lastHeardAt = 0;      // when the recogniser last returned anything
 
 const dom = {};
 for (const id of [
@@ -57,7 +58,7 @@ for (const id of [
     'prompter', 'camera', 'script-view', 'script-text', 'countdown',
     'rec-dot', 'rec-time', 'status', 'progress-bar', 'controls',
     'record-btn', 'rec-icon', 'play-pause', 'settings-btn', 'sheet', 'scrim', 'awake-state',
-    'voice-state',
+    'voice-state', 'hearing', 'hearing-label',
     'review', 'review-take', 'review-length', 'review-video', 'review-note', 'review-tap',
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
     'save-take', 'retake', 'discard-take',
@@ -192,27 +193,49 @@ function init() {
  * failure modes that look identical from the outside: a recogniser that never
  * started, and one that is running but whose words are not matching the script.
  */
+/**
+ * The on-screen "can it hear me" badge. Updated every second while reading, so
+ * a dead microphone announces itself instead of looking like a script that
+ * simply is not moving.
+ */
+function paintHearing() {
+    const badge = dom['hearing'];
+    if (!badge) return;
+
+    const active = isVoiceMode && hasStarted && !dom['prompter'].hidden;
+    badge.hidden = !active;
+    if (!active) return;
+
+    const sinceHeard = performance.now() - lastHeardAt;
+    if (voiceHeard === 0) {
+        badge.dataset.live = sinceHeard > 6000 ? 'deaf' : 'false';
+        dom['hearing-label'].textContent = sinceHeard > 6000 ? 'Cannot hear you' : 'Listening';
+    } else if (sinceHeard < 2500) {
+        badge.dataset.live = 'true';
+        dom['hearing-label'].textContent = 'Hearing you';
+    } else {
+        badge.dataset.live = 'false';
+        dom['hearing-label'].textContent = 'Listening';
+    }
+}
+
 function paintVoiceState() {
     if (!dom['voice-state']) return;
 
-    // Report intent, not the recogniser's momentary state. Opening this very
-    // sheet pauses the script, which stops the recogniser, so reading the raw
-    // state here would always say "off" no matter what was happening.
+    // Answer the only question worth asking here: is voice tracking working?
+    // Reporting the recogniser's momentary state was useless, because opening
+    // this sheet pauses the script and stops the recogniser, so the readout
+    // described the act of looking at it rather than the take.
     let label;
     if (!isSpeechSupported) label = 'Not available in this browser';
-    else if (!isVoiceMode) label = 'Off';
-    else if (isPaused) label = 'Paused';
-    else if (voiceState === 'restarting') label = 'Reconnecting';
-    else if (voiceState === 'listening') label = 'Listening';
-    else label = 'Starting';
+    else if (!voicePreferred) label = 'Off';
+    else if (voiceHeard) label = `Working, heard ${voiceHeard}`;
+    else if (IS_IOS) label = 'Will not run on iPhone';
+    else label = 'On, nothing heard yet';
 
-    const parts = [label];
-    if (voiceHeard) parts.push(`heard ${voiceHeard}`);
-    // The last failure is sticky. It used to be overwritten a moment later by
-    // the "stopped" that always follows an error, hiding the actual cause.
-    if (voiceError) parts.push(voiceError);
-    else if (!voiceHeard && IS_IOS) parts.push('iPhone, limited');
-    dom['voice-state'].textContent = parts.join(' · ');
+    // The last real failure is sticky. It used to be overwritten a moment later
+    // by the "stopped" that always follows an error, hiding the actual cause.
+    dom['voice-state'].textContent = voiceError ? `${label} · ${voiceError}` : label;
 }
 
 function setAwakeState(state) {
@@ -552,8 +575,10 @@ function setupVoice() {
             // the recogniser are alive, which is the first thing to establish
             // when someone reports that voice tracking "does not work".
             voiceHeard += 1;
+            lastHeardAt = performance.now();
             voiceError = ''; // words are arriving, so any earlier failure is stale
             paintVoiceState();
+            paintHearing();
             if (isPaused) return;
             handleTranscript(finalText, interimText);
         },
@@ -563,9 +588,13 @@ function setupVoice() {
             // used to look identical to a script that simply was not moving.
             voiceState = state;
             // speech.js passes non-fatal codes through here as "error: <code>".
-            // Keep the code, it is the only clue to a microphone that will not open.
+            // Keep the code, it is the only clue to a microphone that will not
+            // open. "aborted" is excluded: it is what the browser reports when
+            // WE call abort(), which happens on every pause, so reporting it as
+            // a failure blames the app for its own housekeeping.
             if (String(state).startsWith('error:')) {
-                voiceError = String(state).replace('error:', '').trim();
+                const code = String(state).replace('error:', '').trim();
+                if (code !== 'aborted') voiceError = code;
             }
             paintVoiceState();
             if (!isVoiceMode) return;
@@ -601,11 +630,13 @@ function setVoice(on, remember = false) {
         if (!listener) setupVoice();
         listener.start();
         lastAdvanceAt = performance.now();
+        lastHeardAt = performance.now();
         watchForStall();
     } else if (listener) {
         listener.stop();
         clearInterval(stallTimer);
     }
+    paintHearing();
 }
 
 const feeder = new TranscriptFeeder();
@@ -657,6 +688,7 @@ function paintProgress() {
 function watchForStall() {
     clearInterval(stallTimer);
     stallTimer = setInterval(() => {
+        paintHearing();
         if (!isVoiceMode || isPaused || !hasStarted) return;
         if (dom['status'].dataset.stalled) return;
         if (performance.now() - lastAdvanceAt < 8000) return;

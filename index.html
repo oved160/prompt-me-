@@ -553,6 +553,38 @@
         #rec-dot svg { width: 15px; height: 15px; opacity: 0.75; }
         @keyframes pulse { 50% { opacity: 0.25; } }
 
+        /* Whether the app can hear you has to be answerable WITHOUT opening the
+           settings sheet, because opening it pauses the take and stops the
+           recogniser. So it lives on the reading screen. */
+        #hearing {
+            position: absolute;
+            top: calc(14px + env(safe-area-inset-top));
+            left: 14px;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px 6px 10px;
+            border-radius: 999px;
+            background: oklch(12% 0.008 265 / 0.6);
+            font-size: 0.75rem;
+            color: var(--bone-dim);
+            pointer-events: none;
+            transition: color 300ms var(--ease);
+        }
+        #hearing .ear {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.45;
+            transition: opacity 200ms var(--ease), transform 200ms var(--ease);
+        }
+        /* Pulses on each phrase the recogniser returns, so a working mic is
+           visible at a glance mid-sentence. */
+        #hearing[data-live="true"] { color: var(--bone); }
+        #hearing[data-live="true"] .ear { opacity: 1; transform: scale(1.35); }
+        #hearing[data-live="deaf"] { color: oklch(80% 0.12 25); }
+
         /* Sits over live script text, so it needs its own ground to stay legible. */
         #status {
             position: absolute;
@@ -1014,6 +1046,7 @@
                 <rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>
             </svg>
         </button>
+        <div id="hearing" hidden><span class="ear"></span><span id="hearing-label">Listening</span></div>
         <div id="status" role="status" aria-live="polite"></div>
         <div id="countdown" hidden></div>
 
