@@ -6,11 +6,12 @@ const RESTART_MAX_MS = 4000;
 export const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
 export class SpeechListener {
-  constructor({ lang = 'en-US', onResult, onStatus, onError } = {}) {
+  constructor({ lang = 'en-US', onResult, onStatus, onError, onEvent } = {}) {
     this.lang = lang;
     this.onResult = onResult;
     this.onStatus = onStatus;
     this.onError = onError;
+    this.onEvent = onEvent; // raw event tap, for diagnostics
 
     this._wantRunning = false;
     this._restartCount = 0;
@@ -37,6 +38,7 @@ export class SpeechListener {
 
   _initEventListeners() {
     this.recognition.onstart = () => {
+      this.onEvent?.('start');
       this.onStatus?.('listening');
     };
 
@@ -54,12 +56,14 @@ export class SpeechListener {
       }
 
       if (finalText || interimText) {
+        this.onEvent?.(`result "${(finalText || interimText).slice(0, 40)}"`);
         this.onResult?.({ finalText, interimText });
       }
     };
 
     this.recognition.onerror = (event) => {
       const error = event.error;
+      this.onEvent?.(`error ${error}`);
       if (['no-speech', 'audio-capture', 'aborted'].includes(error)) {
         this.onStatus?.(`error: ${error}`);
         // These are non-fatal; let the 'end' event handle the restart logic
@@ -74,6 +78,7 @@ export class SpeechListener {
     };
 
     this.recognition.onend = () => {
+      this.onEvent?.('end');
       if (this._wantRunning) {
         this._handleAutoRestart();
       } else {

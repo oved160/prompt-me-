@@ -792,6 +792,22 @@
         input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px; background: oklch(97% 0.004 85 / 0.2); }
         input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: none; border-radius: 50%; background: var(--bone); }
 
+        #diag-out {
+            margin: 10px 0 0;
+            padding: 10px;
+            max-height: 34vh;
+            overflow: auto;
+            border-radius: 8px;
+            background: oklch(8% 0.008 265);
+            color: var(--bone-dim);
+            font-size: 0.6875rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            -webkit-user-select: all;
+            user-select: all;
+        }
+
         .sheet-actions {
             display: flex;
             gap: 10px;
@@ -1162,6 +1178,11 @@
                 <span>Screen stays awake</span>
                 <span id="awake-state">Checking</span>
             </div>
+            <div class="sheet-row">
+                <span>Diagnostics</span>
+                <button id="diag-btn" class="toggle">Copy</button>
+            </div>
+            <pre id="diag-out" hidden></pre>
 
             <div class="sheet-actions">
                 <button id="back-btn">Edit script</button>

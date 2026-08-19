@@ -52,6 +52,7 @@ let voicePreferred = true; // the user's own choice, persisted
 let lastHeardAt = 0;      // when the recogniser last returned anything
 let micReleased = false;  // camera audio track handed over to speech recognition
 let micPreferFree = false; // proven on this device that the mic must be freed
+let voiceLogStart = 0;
 
 const dom = {};
 for (const id of [
@@ -60,7 +61,7 @@ for (const id of [
     'prompter', 'camera', 'script-view', 'script-text', 'countdown',
     'rec-dot', 'rec-time', 'status', 'progress-bar', 'controls',
     'record-btn', 'rec-icon', 'play-pause', 'settings-btn', 'sheet', 'scrim', 'awake-state',
-    'voice-state', 'hearing', 'hearing-label',
+    'voice-state', 'hearing', 'hearing-label', 'diag-btn', 'diag-out',
     'review', 'review-take', 'review-length', 'review-video', 'review-note', 'review-tap',
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
     'save-take', 'retake', 'discard-take',
@@ -107,6 +108,7 @@ function init() {
     dom['retake'].addEventListener('click', retake);
     dom['discard-take'].addEventListener('click', () => { discardTake(); leaveShoot(''); });
     dom['scrim'].addEventListener('click', () => openSheet(false));
+    dom['diag-btn'].addEventListener('click', copyDiagnostics);
 
     dom['voice-toggle'].addEventListener('click', () => setVoice(!isVoiceMode, true));
     dom['mirror-toggle'].addEventListener('click', toggleMirror);
@@ -625,9 +627,69 @@ function scrollLoop(now) {
 
 /* ---------------------------------------------------------------- voice */
 
+/**
+ * A phone cannot be attached to a debugger, and "it does not work" is not
+ * something anyone can act on. Every recogniser event is kept here so the
+ * actual sequence can be read off the device: whether it ever started, whether
+ * it ended immediately, and which error code the browser really gave.
+ */
+const voiceLog = [];
+function logVoice(event) {
+    voiceLog.push(`${((performance.now() - voiceLogStart) / 1000).toFixed(1)}s ${event}`);
+    if (voiceLog.length > 40) voiceLog.shift();
+}
+
+/** Everything needed to tell why voice tracking is not working, as plain text. */
+async function buildDiagnostics() {
+    const tracks = stream
+        ? stream.getTracks().map(t => `${t.kind}:${t.readyState}${t.muted ? ',muted' : ''}`).join(' ')
+        : 'no stream';
+
+    let micPermission = 'unknown';
+    try {
+        micPermission = (await navigator.permissions.query({ name: 'microphone' })).state;
+    } catch {
+        // Firefox and older Chrome do not expose the microphone permission.
+    }
+
+    return [
+        `Prompt Me diagnostics`,
+        `browser: ${navigator.userAgent}`,
+        `speech api: ${window.SpeechRecognition ? 'SpeechRecognition' : ''}${window.webkitSpeechRecognition ? ' webkitSpeechRecognition' : ''} (supported=${isSpeechSupported})`,
+        `mic permission: ${micPermission}`,
+        `online: ${navigator.onLine}`,
+        `language: ${dom['lang-select'].value}`,
+        `voice: preferred=${voicePreferred} active=${isVoiceMode} heard=${voiceHeard} error=${voiceError || 'none'}`,
+        `restarts: ${listener ? listener.restarts : 0}`,
+        `mic: released=${micReleased} learnedToFree=${micPreferFree}`,
+        `tracks: ${tracks}`,
+        `recording: ${recorder ? recorder.state : 'inactive'}`,
+        ``,
+        `events:`,
+        ...(voiceLog.length ? voiceLog : ['(none, the recogniser never fired an event)']),
+    ].join('\n');
+}
+
+async function copyDiagnostics() {
+    const report = await buildDiagnostics();
+    try {
+        await navigator.clipboard.writeText(report);
+        dom['diag-btn'].textContent = 'Copied';
+    } catch {
+        // Clipboard is blocked in some contexts, so show it to be read instead.
+        dom['diag-out'].textContent = report;
+        dom['diag-out'].hidden = false;
+        dom['diag-btn'].textContent = 'Shown below';
+    }
+    setTimeout(() => { dom['diag-btn'].textContent = 'Copy'; }, 4000);
+}
+
 function setupVoice() {
+    voiceLogStart = performance.now();
+    voiceLog.length = 0;
     listener = new SpeechListener({
         lang: dom['lang-select'].value,
+        onEvent: logVoice,
         onResult: ({ finalText, interimText }) => {
             // Counted even while paused: it is the proof that the microphone and
             // the recogniser are alive, which is the first thing to establish
