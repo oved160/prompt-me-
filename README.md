@@ -22,6 +22,11 @@ off and everything stays local. Nothing else in the app makes a network request 
   won't throw it off.
 - **Constant-speed fallback** — a classic teleprompter with a speed slider, for when voice
   isn't working for you (noisy room, unsupported browser, or you just prefer it).
+- **Steady pacing while recording** — on real hardware, the microphone can only go to one
+  consumer at a time. Recording claims it, voice pacing hands it over automatically and
+  resumes as soon as the take ends, and the script keeps moving at a steady pace instead of
+  freezing. A side effect worth knowing: the microphone is only ever open while actually
+  recording, not for the whole session.
 - **Watch it back before you keep it** — stopping a take opens a review screen with a real
   player: scrub, skip back five seconds, jump to the start, and an elapsed-of-total readout.
   Save it, shoot it again, or discard it. Nothing is written to your device until you choose

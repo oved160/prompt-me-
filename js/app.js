@@ -50,8 +50,6 @@ let voiceError = '';
 let voiceHeard = 0;       // phrases the recogniser has actually returned
 let voicePreferred = true; // the user's own choice, persisted
 let lastHeardAt = 0;      // when the recogniser last returned anything
-let micReleased = false;  // camera audio track handed over to speech recognition
-let micPreferFree = false; // proven on this device that the mic must be freed
 let voiceLogStart = 0;
 
 const dom = {};
@@ -224,48 +222,31 @@ function paintHearing() {
 }
 
 /**
- * Android tends to hand the microphone to one consumer at a time. While the
- * camera stream holds an audio track, speech recognition can be handed the mic
- * and get silence from it forever: it starts, it never errors, it simply never
- * returns a word. Desktop shares the mic happily, which is why this only ever
- * showed up on a phone.
+ * Confirmed on real Android hardware: the moment a recording claims the
+ * microphone, the Web Speech API cannot get it too. Recognition keeps
+ * starting, gets aborted a couple of seconds in, restarts, and never hears
+ * a word, for as long as the recording holds the mic. This is not something
+ * retrying harder fixes; only one of the two can have the microphone.
  *
- * Rather than guess which devices behave which way, prove it here: if nothing
- * has been heard after a few seconds, release the audio track and restart the
- * recogniser. If words arrive after that, contention was the cause and the
- * preference is remembered for next time. The microphone is reclaimed when a
- * recording starts, which is the only time its audio is actually needed.
+ * So recording wins outright: voice pacing is paused for the length of the
+ * take, scrolling runs at the steady speed instead of freezing on the last
+ * word it heard, and the microphone is asked for only now, not held for the
+ * whole session the way it used to be.
  */
-async function freeMicForSpeech() {
-    if (micReleased || !stream) return;
-    const audio = stream.getAudioTracks();
-    if (!audio.length) return;
-
-    micReleased = true;
-    audio.forEach(t => { stream.removeTrack(t); t.stop(); });
-
-    // Hand the freed microphone straight to a fresh recogniser.
-    if (isVoiceMode && listener) {
-        listener.stop();
-        listener = null;
-        setVoice(true);
+async function acquireMicForRecording() {
+    if (isVoiceMode) {
+        setVoice(false);
+        showStatus('Recording — reading at a steady pace so the microphone stays free for your audio.');
     }
-    showStatus('Freeing the microphone for voice tracking');
-}
-
-/** Recording needs the audio back. Permission is already granted, so this is silent. */
-async function reclaimMicForRecording() {
-    if (!micReleased || !stream) return true;
     try {
         const mic = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
         });
         mic.getAudioTracks().forEach(t => stream.addTrack(t));
-        micReleased = false;
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
-        showStatus('Recording without sound: the microphone could not be reopened.');
+        showStatus('Recording without sound: the microphone could not be opened.');
         return false;
     }
 }
@@ -365,7 +346,6 @@ function restorePreferences() {
     if (saved.speed) dom['speed-range'].value = saved.speed;
     setMirror(saved.mirror !== false); // default on
     voicePreferred = saved.voice !== false; // default on
-    micPreferFree = saved.micFree === true;
     takesShot = Number.isFinite(saved.takes) ? saved.takes : 0;
     paintTakeNumber();
 }
@@ -395,7 +375,6 @@ function savePreferences() {
             speed: dom['speed-range'].value,
             mirror: dom['camera'].classList.contains('mirrored'),
             voice: voicePreferred,
-            micFree: micPreferFree,
             takes: takesShot,
         }));
     } catch {
@@ -429,15 +408,18 @@ function updateReadTime() {
 async function openCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({
-            // Ask for a full quality capture. Without these the browser is free
-            // to hand back 640x480, which is what makes recordings look cheap.
+            // Video only, deliberately. On real Android hardware a live
+            // getUserMedia audio track and the Web Speech API fight over the
+            // microphone: the recogniser starts, gets aborted every couple of
+            // seconds, and never hears a word, for as long as that track is
+            // open. Audio is requested only for the few seconds a recording
+            // actually needs it, in acquireMicForRecording().
             video: {
                 facingMode: 'user',
                 width: { ideal: 1920 },
                 height: { ideal: 1080 },
                 frameRate: { ideal: 30 },
             },
-            audio: { echoCancellation: true, noiseSuppression: true },
         });
         dom['camera'].srcObject = stream;
         return true;
@@ -463,7 +445,6 @@ function closeCamera() {
     clearInterval(stallTimer);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null;
-    micReleased = false;
     dom['camera'].srcObject = null;
     releaseWakeLock();
     setPaused(true, true);
@@ -516,7 +497,6 @@ async function beginReading() {
     // microphone back on Google's servers for someone who switched it off
     // precisely to stop that.
     if (isSpeechSupported && voicePreferred) {
-        if (micPreferFree) freeMicForSpeech();
         setVoice(true);
     } else if (!isSpeechSupported) {
         showStatus('Voice pacing needs Chrome on Android or a desktop. Scrolling at a steady speed.');
@@ -661,7 +641,6 @@ async function buildDiagnostics() {
         `language: ${dom['lang-select'].value}`,
         `voice: preferred=${voicePreferred} active=${isVoiceMode} heard=${voiceHeard} error=${voiceError || 'none'}`,
         `restarts: ${listener ? listener.restarts : 0}`,
-        `mic: released=${micReleased} learnedToFree=${micPreferFree}`,
         `tracks: ${tracks}`,
         `recording: ${recorder ? recorder.state : 'inactive'}`,
         ``,
@@ -696,12 +675,6 @@ function setupVoice() {
             // when someone reports that voice tracking "does not work".
             voiceHeard += 1;
             lastHeardAt = performance.now();
-            if (micReleased && !micPreferFree) {
-                // Words only started once the camera let go of the microphone.
-                // Remember it, so the next take does not lose five seconds.
-                micPreferFree = true;
-                savePreferences();
-            }
             voiceError = ''; // words are arriving, so any earlier failure is stale
             paintVoiceState();
             paintHearing();
@@ -739,8 +712,10 @@ function setupVoice() {
 
 /**
  * @param {boolean} on
- * @param {boolean} [remember] true only when the user chose this themselves, so
- *   that an error switching voice off does not permanently disable the feature.
+ * @param {boolean} [remember] true only when the user chose this themselves.
+ *   Recording pauses voice operationally without this, so the toggle keeps
+ *   showing the user's real preference instead of flipping to "Off" for
+ *   something the user never asked to change.
  */
 function setVoice(on, remember = false) {
     if (on && !isSpeechSupported) return;
@@ -749,8 +724,7 @@ function setVoice(on, remember = false) {
         savePreferences();
     }
     isVoiceMode = on;
-    dom['voice-toggle'].setAttribute('aria-pressed', String(on));
-    dom['voice-toggle'].textContent = on ? 'On' : 'Off';
+    paintVoiceToggle();
 
     if (on) {
         if (!listener) setupVoice();
@@ -816,13 +790,6 @@ function watchForStall() {
     stallTimer = setInterval(() => {
         paintHearing();
         if (!isVoiceMode || isPaused || !hasStarted) return;
-        // Nothing heard after a few seconds: try it without the camera holding
-        // the microphone. Costs nothing if that was not the problem.
-        if (!voiceHeard && !micReleased && performance.now() - lastHeardAt > 5000
-            && (!recorder || recorder.state === 'inactive')) {
-            freeMicForSpeech();
-            return;
-        }
         if (dom['status'].dataset.stalled) return;
         if (performance.now() - lastAdvanceAt < 8000) return;
         dom['status'].dataset.stalled = '1';
@@ -959,7 +926,7 @@ async function runRecordingToggle() {
     // count down once, then start both together.
     if (!hasStarted) await beginReading();
 
-    await reclaimMicForRecording();
+    await acquireMicForRecording();
     recorder = new Recorder(stream);
     recorder.start();
 
@@ -1240,16 +1207,19 @@ function stopAll() {
     listener = null;
     recorder = null;
     stream = null;
-    micReleased = false;
     isVoiceMode = false;
     isPaused = false;
     showStatus('');
     dom['rec-dot'].hidden = true;
-    // Reflect the user's own choice, not merely what the browser can do.
+    paintVoiceToggle();
+    paintVoiceState();
+}
+
+/** Reflects the user's own choice, not merely the moment-to-moment operational state. */
+function paintVoiceToggle() {
     const willListen = isSpeechSupported && voicePreferred;
     dom['voice-toggle'].setAttribute('aria-pressed', String(willListen));
     dom['voice-toggle'].textContent = willListen ? 'On' : 'Off';
-    paintVoiceState();
 }
 
 init();
