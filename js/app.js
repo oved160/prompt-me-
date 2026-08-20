@@ -456,10 +456,6 @@ function updateReadTime() {
  * Opens the camera and mic. Returns false and explains itself if it cannot,
  * leaving the caller on whatever screen it was on.
  */
-function portraitCapture() {
-    return window.innerHeight >= window.innerWidth;
-}
-
 async function openCamera() {
     try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -469,13 +465,16 @@ async function openCamera() {
             // seconds, and never hears a word, for as long as that track is
             // open. Audio is requested only for the few seconds a recording
             // actually needs it, in acquireMicForRecording().
-            // Match the capture to the way the phone is being held. Asking for
-            // 1920x1080 on a phone held upright records a landscape frame while
-            // the preview is cropped to fill a portrait screen, so what you
-            // framed up is not what comes out.
-            video: portraitCapture()
-                ? { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }
-                : { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+            // Ask for a full quality capture and nothing more. Forcing a
+            // portrait shape here made Chrome crop the sensor's native frame
+            // and scale it up, which zoomed the picture hard into the middle
+            // of the reader's face. The camera's own aspect is left alone.
+            video: {
+                facingMode: 'user',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 30 },
+            },
         });
         dom['camera'].srcObject = stream;
         return true;

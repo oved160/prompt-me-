@@ -84,6 +84,10 @@ npm test
 - **Recording format depends on the browser.** The app records MP4 at 8 Mbps where the
   browser supports it, and falls back to WebM. WebM won't import into a phone's photo
   gallery, so on desktop the file lands in your downloads folder instead.
+- **The preview fills the screen, the file keeps the camera's own frame.** The camera's
+  aspect is left alone deliberately: forcing a portrait shape makes some phones crop the
+  sensor and zoom in hard. So the preview is cropped to fill your screen while the recording
+  keeps the wider frame, and the file may include more at the sides than you saw.
 - **Recording captures the camera, not the screen.** Your script never appears in the video,
   and neither does the mirror setting.
 - **Long scripts and heavy accents** will drift. The matcher only searches a window around
