@@ -890,9 +890,28 @@
             border-radius: 14px;
             overflow: hidden;
         }
+        /* The whole point of review is checking the actual take, so this must
+           never crop. object-fit: contain always shows the full frame,
+           letterboxed if the box does not match the recording's shape. The
+           live camera preview is deliberately different (object-fit: cover,
+           framed to match the recording) because that one fills the screen;
+           this one only has to show the truth.
+
+           Sized with position: absolute + inset: 0 rather than width/height:
+           100%, because a plain percentage height needs a fully definite
+           ancestor chain to resolve against, which this flex column does not
+           reliably give it. When it failed, the video fell back to sizing from
+           its own intrinsic aspect instead, at 331px wide that came out 588px
+           tall against an only-483px box, and overflow: hidden clipped the
+           rest without a trace. An absolutely positioned box resolves against
+           its containing block unambiguously, so there is nothing left to
+           silently fail. */
         #review-video {
-            max-width: 100%;
-            max-height: 100%;
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
             display: block;
         }
         /* The whole frame is a play/pause target, the way a phone player works. */
