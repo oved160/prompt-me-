@@ -1,6 +1,6 @@
 import { ScriptMatcher, tokenize } from './matcher.js';
 import { SpeechListener, isSpeechSupported } from './speech.js';
-import { Recorder, saveRecording, pickMimeType } from './recorder.js';
+import { Recorder, shareRecording, downloadRecording, canShareVideo, pickMimeType } from './recorder.js';
 import { stepScroll, naturalPace, nearestWordIndex, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
@@ -83,7 +83,7 @@ for (const id of [
     'voice-state', 'hearing', 'hearing-label', 'diag-btn', 'diag-out',
     'review', 'review-take', 'review-length', 'review-video', 'review-note', 'review-tap',
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
-    'save-take', 'retake', 'discard-take',
+    'share-take', 'save-take', 'retake', 'discard-take',
     'voice-toggle', 'mirror-toggle', 'restart-btn', 'back-btn', 'sheet-lang',
     'speed-range', 'font-range', 'opacity-range',
 ]) {
@@ -123,6 +123,7 @@ function init() {
     dom['settings-btn'].addEventListener('click', () => openSheet(true));
     dom['rec-dot'].addEventListener('click', toggleRecordingPause);
     wireReviewPlayer();
+    dom['share-take'].addEventListener('click', shareTake);
     dom['save-take'].addEventListener('click', saveTake);
     dom['retake'].addEventListener('click', retake);
     dom['discard-take'].addEventListener('click', () => { discardTake(); leaveShoot(''); });
@@ -269,8 +270,11 @@ async function acquireMicForRecording() {
         // tracking is better, so try to keep it and only fall back if this
         // device genuinely refuses to run both at once.
         prepareLevelPacing(mic);
+        // Pace by sound from the very first frame. Waiting to find out whether
+        // recognition survives left the script sitting still for six seconds at
+        // the top of every take, which is exactly the delay it looked like.
+        levelPacing = true;
         if (isVoiceMode) watchWordTrackingDuringTake();
-        else levelPacing = true;
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
@@ -280,28 +284,25 @@ async function acquireMicForRecording() {
 }
 
 /**
- * Word tracking used to be switched off the moment a recording started, on the
- * strength of one device where the two could not share the microphone. That
- * made the take pace by loudness alone, which moves the script while you make
- * noise without knowing which word you are on. It is worth trying the real
- * thing first: plenty of hardware runs both.
+ * Recognition keeps running when a take starts, because plenty of hardware can
+ * share the microphone with a recording. Sound pacing carries the script in the
+ * meantime, and hands over the moment a real word lands.
  *
- * So recognition keeps running, and only if no word arrives in the first few
- * seconds of the take does the app conclude this phone cannot do it and drop
- * to pacing by sound.
+ * This only decides the losing case: if recognition has produced nothing at all
+ * a few seconds in, it is not going to, so stop it rather than leave it
+ * restarting into a microphone it cannot have.
  */
 function watchWordTrackingDuringTake() {
     clearTimeout(takeVoiceWatch);
     const heardAtStart = voiceHeard;
     takeVoiceWatch = setTimeout(() => {
         if (!recorder || recorder.state === 'inactive') return;
-        if (voiceHeard > heardAtStart) return; // recognition survived, leave it alone
-        fallBackToLevelPacing();
+        if (voiceHeard > heardAtStart) return; // words already took over
+        stopWordTrackingForTake();
     }, 6000);
 }
 
-function fallBackToLevelPacing() {
-    if (levelPacing) return;
+function stopWordTrackingForTake() {
     if (isVoiceMode) setVoice(false);
     levelPacing = true;
     showStatus('This phone cannot listen for words while recording, so the script follows the sound of your voice instead.');
@@ -855,6 +856,12 @@ function setupVoice() {
             // when someone reports that voice tracking "does not work".
             voiceHeard += 1;
             lastHeardAt = performance.now();
+            if (levelPacing && recorder && recorder.state !== 'inactive') {
+                // Recognition is alive after all, so stop gating on loudness and
+                // follow the words, which know where in the script we are.
+                levelPacing = false;
+                showStatus('');
+            }
             voiceError = ''; // words are arriving, so any earlier failure is stale
             paintVoiceState();
             paintHearing();
@@ -884,7 +891,7 @@ function setupVoice() {
             // Losing recognition during a take is the contention case: switch
             // to sound pacing rather than leaving the script stranded.
             if (recorder && recorder.state !== 'inactive') {
-                fallBackToLevelPacing();
+                stopWordTrackingForTake();
                 return;
             }
             voiceState = 'error';
@@ -1217,6 +1224,8 @@ function openReview() {
     dom['review-take'].textContent = `Take ${String(currentTake).padStart(2, '0')}`;
     dom['review-length'].textContent = formatClock(pendingTakeMs);
     dom['review-note'].textContent = 'Check it before you keep it. Nothing has been saved yet.';
+    // A share button that cannot share is worse than no share button.
+    dom['share-take'].hidden = !canShareVideo(pendingTake, takeName());
     setPlayIcon(false);
     paintPlayhead(0);
     dom['review'].hidden = false;
@@ -1319,26 +1328,41 @@ function discardTake() {
     pendingTakeMs = 0;
 }
 
-async function saveTake() {
+function takeName() {
+    return `prompt-me-take-${String(currentTake).padStart(2, '0')}-${timestamp()}`;
+}
+
+/** Hands the take to the phone's share sheet: Instagram, WhatsApp, Photos. */
+async function shareTake() {
     if (!pendingTake) return;
-    const name = `prompt-me-take-${String(currentTake).padStart(2, '0')}-${timestamp()}`;
-    dom['save-take'].disabled = true;
-    dom['review-note'].textContent = 'Saving';
+    dom['share-take'].disabled = true;
+    dom['review-note'].textContent = 'Opening the share sheet';
     try {
-        const result = await saveRecording(pendingTake, name);
-        if (result.method === 'cancelled') {
-            // A dismissed share sheet is a routine slip, so the take stays put.
-            dom['review-note'].textContent = 'Not saved. The take is still here, try again when you are ready.';
+        const result = await shareRecording(pendingTake, takeName());
+        if (result.method === 'share') {
+            discardTake();
+            leaveShoot('Shared. The take is on its way to whichever app you picked.');
             return;
         }
+        // Cancelled, unsupported or failed: the take stays exactly where it is.
+        dom['review-note'].textContent = result.method === 'unsupported'
+            ? 'This browser cannot share files. Use Download instead.'
+            : 'Not shared. The take is still here, try again or download it.';
+    } finally {
+        dom['share-take'].disabled = false;
+    }
+}
+
+/** Writes the take to the device as a file. */
+function saveTake() {
+    if (!pendingTake) return;
+    dom['review-note'].textContent = 'Saving';
+    try {
+        downloadRecording(pendingTake, takeName());
         discardTake();
-        leaveShoot(result.method === 'share'
-            ? 'Saved. Pick Photos in the share sheet to keep it in your gallery.'
-            : 'Saved to your downloads.');
+        leaveShoot('Saved to your downloads.');
     } catch {
         dom['review-note'].textContent = 'That did not save. The take is still here, try again.';
-    } finally {
-        dom['save-take'].disabled = false;
     }
 }
 

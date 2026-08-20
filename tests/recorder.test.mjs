@@ -87,3 +87,67 @@ test('starting with no supported type fails loudly', () => {
     const r = new Recorder({});
     assert.throws(() => r.start(), /mime type/i);
 });
+
+/* ---------------------------------------------- sharing and downloading */
+
+const { takeFile, canShareVideo, shareRecording } = await import('../js/recorder.js');
+
+function fakeBlob(type = 'video/mp4') {
+    return { type, size: 1234 };
+}
+
+// navigator is a getter-only global in Node, so it has to be redefined rather
+// than assigned. File is not defined there at all.
+function stubEnv(nav) {
+    globalThis.File = class { constructor(parts, name, opts) { this.name = name; this.type = opts.type; } };
+    Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true });
+}
+
+test('the file is named and typed from the take', () => {
+    stubEnv({});
+    const f = takeFile(fakeBlob(), 'prompt-me-take-03');
+    assert.equal(f.name, 'prompt-me-take-03.mp4');
+    assert.equal(f.type, 'video/mp4');
+});
+
+test('a webm take gets the webm extension, since galleries reject it', () => {
+    stubEnv({});
+    assert.equal(takeFile(fakeBlob('video/webm;codecs=vp9,opus'), 'take').name, 'take.webm');
+});
+
+test('sharing is reported unsupported rather than attempted', async () => {
+    stubEnv({}); // no canShare at all, as on desktop Firefox
+    assert.equal(canShareVideo(fakeBlob(), 'take'), false);
+    const result = await shareRecording(fakeBlob(), 'take');
+    assert.equal(result.method, 'unsupported');
+});
+
+test('dismissing the share sheet is not treated as a failure', async () => {
+    stubEnv({
+        canShare: () => true,
+        share: async () => { const e = new Error('dismissed'); e.name = 'AbortError'; throw e; },
+    });
+    const result = await shareRecording(fakeBlob(), 'take');
+    assert.equal(result.method, 'cancelled', 'a dismissed sheet must leave the take recoverable');
+});
+
+test('a genuine share failure is distinguished from a dismissal', async () => {
+    stubEnv({
+        canShare: () => true,
+        share: async () => { throw new Error('transport exploded'); },
+    });
+    assert.equal((await shareRecording(fakeBlob(), 'take')).method, 'failed');
+});
+
+test('a successful share reports success', async () => {
+    let shared = null;
+    stubEnv({ canShare: () => true, share: async (d) => { shared = d; } });
+    assert.equal((await shareRecording(fakeBlob(), 'my-take')).method, 'share');
+    assert.equal(shared.files.length, 1);
+    assert.equal(shared.files[0].name, 'my-take.mp4');
+});
+
+test('canShareVideo survives a browser that throws from canShare', () => {
+    stubEnv({ canShare: () => { throw new Error('nope'); } });
+    assert.equal(canShareVideo(fakeBlob(), 'take'), false);
+});

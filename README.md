@@ -36,8 +36,9 @@ off and everything stays local. Nothing else in the app makes a network request 
   inventing a word it never heard.
 - **Watch it back before you keep it** — stopping a take opens a review screen with a real
   player: scrub, skip back five seconds, jump to the start, and an elapsed-of-total readout.
-  Save it, shoot it again, or discard it. Nothing is written to your device until you choose
-  to save, and the file is named by take number.
+  Share it straight to Instagram, WhatsApp or Photos through the phone's own share sheet,
+  download it as a file, shoot it again, or discard it. Nothing is written to your device
+  until you choose, and the file is named by take number.
 - **The camera switches off the moment you stop shooting** — the indicator light goes out
   before the review screen appears, not when you eventually leave the page.
 - **Takes are numbered** — the slate counts attempts the way a real one does. Every time you

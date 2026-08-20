@@ -122,37 +122,51 @@ export class Recorder {
   }
 }
 
-export async function saveRecording(blob, filenameBase) {
+/** The file a take should be saved or shared as. */
+export function takeFile(blob, filenameBase) {
   const extension = blob.type.includes('mp4') ? '.mp4' : '.webm';
   const filename = `${filenameBase}${extension}`;
-  const file = new File([blob], filename, { type: blob.type });
+  return new File([blob], filename, { type: blob.type });
+}
 
-  // navigator.share is the only way to trigger the native "Save to Gallery/Photos" 
-  // flow on mobile devices.
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({
-        files: [file],
-        title: filenameBase,
-      });
-      return { method: 'share' };
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        return { method: 'cancelled' };
-      }
-      // Fall through to download if share fails for other reasons
-    }
+/** Whether this device can hand a video to other apps at all. */
+export function canShareVideo(blob, filenameBase = 'take') {
+  if (!navigator.canShare) return false;
+  try {
+    return navigator.canShare({ files: [takeFile(blob, filenameBase)] });
+  } catch {
+    return false;
   }
+}
 
-  // Fallback to traditional browser download
+/**
+ * Hands the take to the phone's own share sheet, which is what puts it into
+ * Instagram, WhatsApp, TikTok or Photos. Sharing and downloading are separate
+ * on purpose: one button that silently did whichever the device supported gave
+ * people no way to ask for the other.
+ */
+export async function shareRecording(blob, filenameBase) {
+  const file = takeFile(blob, filenameBase);
+  if (!canShareVideo(blob, filenameBase)) return { method: 'unsupported' };
+  try {
+    await navigator.share({ files: [file], title: filenameBase });
+    return { method: 'share' };
+  } catch (err) {
+    if (err.name === 'AbortError') return { method: 'cancelled' };
+    return { method: 'failed' };
+  }
+}
+
+/** Writes the take straight to the device as a file. */
+export function downloadRecording(blob, filenameBase) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.style.display = 'none';
   a.href = url;
-  a.download = filename;
+  a.download = takeFile(blob, filenameBase).name;
   document.body.appendChild(a);
   a.click();
-  
+
   setTimeout(() => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
@@ -160,3 +174,4 @@ export async function saveRecording(blob, filenameBase) {
 
   return { method: 'download' };
 }
+
