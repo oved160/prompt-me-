@@ -63,7 +63,7 @@
 
             --display: 'Fraunces', Georgia, 'Times New Roman', serif;
             --body: 'Archivo', ui-sans-serif, system-ui, -apple-system, sans-serif;
-            --shade: 0.62;
+            --shade: 0.6;
             --font-size: 34px;
             --ease: cubic-bezier(0.16, 1, 0.3, 1); /* ease-out-expo */
         }
@@ -1153,7 +1153,10 @@
             </div>
             <div class="sheet-row">
                 <label for="opacity-range">Dimming</label>
-                <input id="opacity-range" type="range" min="0" max="0.9" step="0.05" value="0.45">
+                <!-- Must match --shade in :root. applyShade() writes this value
+                     over the CSS default on startup, so a mismatch here silently
+                     undoes the dimming the stylesheet asks for. -->
+                <input id="opacity-range" type="range" min="0" max="0.9" step="0.05" value="0.6">
             </div>
             <div class="sheet-row">
                 <span>Follow my voice</span>

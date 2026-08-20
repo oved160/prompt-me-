@@ -8,6 +8,14 @@ import { SpeechActivity, rmsOf } from './voicelevel.js';
 import { coverCrop, verticalSize } from './framing.js';
 
 const STORE_KEY = 'prompt-me';
+/**
+ * Bumped whenever a slider's default changes. savePreferences() writes the
+ * sliders on startup whether or not they were touched, so an old default gets
+ * stored as though it were a deliberate choice and the new one never reaches
+ * anyone who used the app before. On a version change the sliders fall back to
+ * their current defaults; the script, language and take count are kept.
+ */
+const STORE_VERSION = 2;
 
 /**
  * Every browser on iOS is WebKit underneath, Chrome included, and Web Speech is
@@ -124,7 +132,7 @@ function init() {
     dom['restart-btn'].addEventListener('click', restart);
     dom['back-btn'].addEventListener('click', goBack);
 
-    dom['font-range'].addEventListener('input', () => { applyFontSize(); savePreferences(); });
+    dom['font-range'].addEventListener('input', () => { applyFontSize(); measurePace(); savePreferences(); });
     dom['opacity-range'].addEventListener('input', () => { applyShade(); savePreferences(); });
     dom['speed-range'].addEventListener('input', savePreferences);
     dom['lang-select'].addEventListener('change', () => {
@@ -171,6 +179,9 @@ function init() {
     document.querySelector('.grabber')?.addEventListener('click', () => openSheet(false));
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    // Rotating the phone or the URL bar sliding away changes how tall the
+    // script renders, and with it the pace it should scroll at.
+    window.addEventListener('resize', () => { if (!dom['prompter'].hidden) measurePace(); });
 
     // Desktop convenience: space to pause, escape to close the sheet.
     document.addEventListener('keydown', (e) => {
@@ -439,12 +450,13 @@ function restorePreferences() {
     } catch {
         saved = {};
     }
+    const sameVersion = saved.v === STORE_VERSION;
     if (saved.script) dom['script-input'].value = saved.script;
     if (saved.lang) dom['lang-select'].value = saved.lang;
     dom['sheet-lang'].value = dom['lang-select'].value;
-    if (saved.font) dom['font-range'].value = saved.font;
-    if (saved.shade) dom['opacity-range'].value = saved.shade;
-    if (saved.speed) dom['speed-range'].value = saved.speed;
+    if (saved.font && sameVersion) dom['font-range'].value = saved.font;
+    if (saved.shade && sameVersion) dom['opacity-range'].value = saved.shade;
+    if (saved.speed && sameVersion) dom['speed-range'].value = saved.speed;
     setMirror(saved.mirror !== false); // default on
     voicePreferred = saved.voice !== false; // default on
     takesShot = Number.isFinite(saved.takes) ? saved.takes : 0;
@@ -469,6 +481,7 @@ function paintTakeNumber() {
 function savePreferences() {
     try {
         localStorage.setItem(STORE_KEY, JSON.stringify({
+            v: STORE_VERSION,
             script: dom['script-input'].value,
             lang: dom['lang-select'].value,
             font: dom['font-range'].value,
