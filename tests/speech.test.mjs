@@ -11,7 +11,12 @@ class FakeRecognition {
         FakeRecognition.instances.push(this);
         this.startCalls = 0;
     }
-    start() { this.startCalls += 1; this.onstart?.(); }
+    start() {
+        this.startCalls += 1;
+        this.onstart?.();
+        // A device stuck in a tight loop ends the session the instant it opens.
+        if (this.dieInstantly) setTimeout(() => this.onend?.(), 0);
+    }
     abort() { this.onend?.(); }
     /** Simulate Chrome ending the session on its own. */
     endSession() { this.onend?.(); }
@@ -64,26 +69,31 @@ test('a session that ran a healthy length restarts immediately', async () => {
     assert.equal(rec().startCalls, before + 1, 'did not restart promptly after a healthy session');
 });
 
-test('an instantly-failing session backs off instead of spinning', async () => {
+test('a session that dies the instant it opens is throttled, not spun', async () => {
+    // The real fault worth guarding against: recognition that fails to open at
+    // all, over and over. Left ungoverned it would restart flat out and pin the
+    // CPU. The fake drives the loop itself here rather than the test stacking
+    // timers, which is what actually happens on a broken device.
     const { listener, rec } = makeListener();
     listener.start();
+    rec().dieInstantly = true;
+    rec().endSession(); // the first session has already opened, so end it to begin the loop
 
-    // Three instant end events in a row: the tight loop worth guarding against.
-    rec().endSession();
-    await sleep(20);
-    rec().endSession();
-    await sleep(20);
-    rec().endSession();
+    await sleep(1000);
+    const inFirstSecond = rec().startCalls;
+    assert.ok(inFirstSecond < 12,
+        `restarted ${inFirstSecond} times in a second, which is spinning rather than backing off`);
 
-    const callsRightAway = rec().startCalls;
-    await sleep(120);
-    // The backoff has grown past 120ms, so no restart has landed yet.
-    assert.equal(rec().startCalls, callsRightAway, 'restarted too eagerly during a tight loop');
-
-    // It still recovers rather than abandoning the user.
-    await sleep(1200);
-    assert.ok(rec().startCalls > callsRightAway, 'never came back after backing off');
+    // And it must not give up: it is still trying, just slowly. The wait has to
+    // clear the four second ceiling the backoff has reached by now.
+    const before = rec().startCalls;
+    await sleep(4500);
+    assert.ok(rec().startCalls > before, 'stopped trying altogether');
     assert.ok(listener.running);
+    // Without this the restart chain keeps rescheduling itself forever and the
+    // test process never exits.
+    listener.stop();
+    rec().dieInstantly = false;
 });
 
 test('stop() is honoured and does not trigger a restart', async () => {
@@ -110,4 +120,43 @@ test('no-speech is passed through as a status, not a fatal error', async () => {
     rec().onerror({ error: 'no-speech' });
     assert.ok(listener.running, 'a silent moment should not end voice tracking');
     assert.ok(events.some(e => e.includes('no-speech')), 'the code was swallowed');
+});
+
+test('normal Android sessions do not trigger the tight-loop backoff', async () => {
+    // Chrome on Android ignores `continuous` and ends a session after each
+    // utterance, typically after one to two seconds. Treating that as a fault
+    // and backing off left the recogniser switched off for seconds at a time,
+    // which is indistinguishable from voice tracking simply not working.
+    const { listener, rec } = makeListener();
+    listener.start();
+
+    for (let i = 0; i < 6; i++) {
+        // A session that ran for a second and a half, then ended by itself.
+        listener._sessionStart = Date.now() - 1500;
+        const before = rec().startCalls;
+        rec().endSession();
+        await sleep(200);
+        assert.equal(rec().startCalls, before + 1,
+            `utterance ${i + 1}: recogniser had not restarted within 200ms`);
+    }
+    assert.ok(listener.running);
+});
+
+test('the backoff keeps growing while the failure persists', async () => {
+    const { listener, rec } = makeListener();
+    listener.start();
+    rec().dieInstantly = true;
+    rec().endSession();
+
+    await sleep(600);
+    const early = rec().startCalls;
+    await sleep(600);
+    const laterGrowth = rec().startCalls - early;
+
+    // Restarts thin out as the delay doubles, rather than continuing at a
+    // constant rate.
+    assert.ok(laterGrowth <= early,
+        `restarts did not thin out: ${early} in the first 600ms, ${laterGrowth} in the next`);
+    listener.stop();
+    rec().dieInstantly = false;
 });

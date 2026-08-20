@@ -1,6 +1,17 @@
-// A session that ran this long was working, not looping.
-const HEALTHY_SESSION_MS = 2000;
-const RESTART_BASE_MS = 250;
+/**
+ * A session shorter than this ended so fast that nothing can have happened in
+ * it, which is the tight loop worth guarding against.
+ *
+ * It used to be two seconds, which was wrong and quietly broke voice tracking.
+ * Chrome on Android ignores `continuous` and ends a session after every
+ * utterance, normally after one or two seconds
+ * (https://issues.chromium.org/issues/40324711). Calling that a fault meant
+ * six ordinary utterances pushed the backoff to its four second ceiling, so
+ * the recogniser spent most of the take switched off and heard almost nothing.
+ */
+const HEALTHY_SESSION_MS = 300;
+/** Speech spoken between sessions is lost, so the gap is kept short. */
+const RESTART_BASE_MS = 100;
 const RESTART_MAX_MS = 4000;
 
 export const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
