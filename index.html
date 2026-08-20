@@ -413,12 +413,24 @@
             height: 100dvh;
         }
 
+        /* The preview is the recording frame, not a screen filler.
+           Stretching the camera to fill a 9:20 phone screen crops the sides far
+           harder than the 9:16 file does, so the reader frames themselves
+           against a tighter picture than they actually get. Holding the preview
+           to the same 9:16 the recording uses means what is on screen is what
+           lands in the video. `margin: auto` inside `inset: 0` centres it
+           without a transform, leaving that free for mirroring. */
         #camera {
             position: absolute;
             inset: 0;
+            margin: auto;
             width: 100%;
-            height: 100%;
+            height: auto;
+            aspect-ratio: 9 / 16;
+            max-width: 100%;
+            max-height: 100%;
             object-fit: cover;
+            background: oklch(8% 0.008 265);
             z-index: 0;
         }
         .mirrored { transform: scaleX(-1); }

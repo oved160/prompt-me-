@@ -16,7 +16,8 @@ off and everything stays local. Nothing else in the app makes a network request 
 
 ## What it does
 
-- **Live camera background** — your front camera fills the screen, your script floats on top.
+- **Live camera background** — your front camera sits behind your script, framed to exactly
+  what will be recorded.
 - **Voice-paced scrolling** — the browser's built-in speech recognition listens to you read
   and moves the script to keep up. It matches loosely, so a fluffed word or an ad-lib
   won't throw it off.
@@ -84,10 +85,13 @@ npm test
 - **Recording format depends on the browser.** The app records MP4 at 8 Mbps where the
   browser supports it, and falls back to WebM. WebM won't import into a phone's photo
   gallery, so on desktop the file lands in your downloads folder instead.
-- **The preview fills the screen, the file keeps the camera's own frame.** The camera's
-  aspect is left alone deliberately: forcing a portrait shape makes some phones crop the
-  sensor and zoom in hard. So the preview is cropped to fill your screen while the recording
-  keeps the wider frame, and the file may include more at the sides than you saw.
+- **What you see is what you record.** Recording is vertical (9:16) by default, and the
+  preview is held to exactly that shape rather than stretched to fill the screen. Phone
+  screens are usually taller than 9:16, so filling them cropped the preview harder than the
+  file and you framed yourself against a tighter picture than you actually got. The camera
+  itself is left at its native aspect, because forcing a portrait shape on it makes some
+  phones crop their own sensor and zoom in hard; the crop to vertical happens on a canvas
+  instead.
 - **Recording captures the camera, not the screen.** Your script never appears in the video,
   and neither does the mirror setting.
 - **Long scripts and heavy accents** will drift. The matcher only searches a window around

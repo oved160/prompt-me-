@@ -5,7 +5,7 @@ import { stepScroll, naturalPace, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
 import { SpeechActivity, rmsOf } from './voicelevel.js';
-import { coverCrop, verticalSize } from './framing.js';
+import { coverCrop, verticalSize, VERTICAL_ASPECT } from './framing.js';
 
 const STORE_KEY = 'prompt-me';
 /**
@@ -540,6 +540,9 @@ async function openCamera() {
             },
         });
         dom['camera'].srcObject = stream;
+        // One source of truth for the shape: the preview is held to exactly the
+        // aspect the recording is cropped to, so the two cannot drift apart.
+        dom['camera'].style.aspectRatio = String(VERTICAL_ASPECT);
         return true;
     } catch (err) {
         showSetupError({
