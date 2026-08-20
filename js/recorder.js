@@ -122,11 +122,20 @@ export class Recorder {
   }
 }
 
-/** The file a take should be saved or shared as. */
+/**
+ * The file a take should be saved or shared as.
+ *
+ * The type is stripped back to bare "video/mp4". MediaRecorder reports the full
+ * string it recorded with, codecs and all, and passing that straight into a
+ * File gives it a type of "video/mp4;codecs=avc1.42E01E,mp4a.40.2". Android
+ * share targets match on the exact MIME type, and nothing matches that, so the
+ * share sheet comes up with nothing in it or does nothing at all. canShare()
+ * still answers true, which is what makes it look like it ought to work.
+ */
 export function takeFile(blob, filenameBase) {
-  const extension = blob.type.includes('mp4') ? '.mp4' : '.webm';
-  const filename = `${filenameBase}${extension}`;
-  return new File([blob], filename, { type: blob.type });
+  const baseType = (blob.type || '').split(';')[0] || 'video/mp4';
+  const extension = baseType.includes('mp4') ? '.mp4' : '.webm';
+  return new File([blob], `${filenameBase}${extension}`, { type: baseType });
 }
 
 /** Whether this device can hand a video to other apps at all. */

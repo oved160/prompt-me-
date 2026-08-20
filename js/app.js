@@ -387,11 +387,29 @@ function stopLevelPacing() {
     }
 }
 
-/** True when the reader is audibly speaking. Cheap enough to call every frame. */
+/**
+ * True when the reader is audibly speaking. Cheap enough to call every frame.
+ *
+ * Note which way every failure resolves: a missing analyser, or one that turns
+ * out to be producing nothing, returns true so the script keeps moving. The
+ * gate is only ever allowed to hold the script when it is genuinely hearing
+ * the room and that room is quiet.
+ */
 function readerIsSpeaking() {
     if (!levelPacing || !levelAnalyser || !levelBuffer) return true;
+
     levelAnalyser.getFloatTimeDomainData(levelBuffer);
-    return levelDetector.update(rmsOf(levelBuffer), performance.now());
+    const now = performance.now();
+    const speaking = levelDetector.update(rmsOf(levelBuffer), now);
+
+    if (levelDetector.isDeaf(now)) {
+        // Nothing but digital silence: a suspended AudioContext, or a track
+        // that never went live. Gating on it would freeze the take.
+        levelPacing = false;
+        showStatus('Cannot hear the microphone, so the script scrolls at a steady speed.');
+        return true;
+    }
+    return speaking;
 }
 
 function paintVoiceState() {

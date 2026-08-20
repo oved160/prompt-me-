@@ -151,3 +151,27 @@ test('canShareVideo survives a browser that throws from canShare', () => {
     stubEnv({ canShare: () => { throw new Error('nope'); } });
     assert.equal(canShareVideo(fakeBlob(), 'take'), false);
 });
+
+test('the shared file carries a bare MIME type, not the recorder codec string', () => {
+    // Android share targets match on the exact MIME type. A type of
+    // "video/mp4;codecs=avc1.42E01E,mp4a.40.2" matches no app at all, so the
+    // sheet opens empty while canShare() still claims it will work.
+    stubEnv({});
+    const f = takeFile(fakeBlob('video/mp4;codecs=avc1.42E01E,mp4a.40.2'), 'take');
+    assert.equal(f.type, 'video/mp4');
+    assert.equal(f.name, 'take.mp4');
+});
+
+test('a webm take is also reduced to its bare type', () => {
+    stubEnv({});
+    const f = takeFile(fakeBlob('video/webm;codecs=vp9,opus'), 'take');
+    assert.equal(f.type, 'video/webm');
+    assert.equal(f.name, 'take.webm');
+});
+
+test('a blob with no type at all still produces a shareable file', () => {
+    stubEnv({});
+    const f = takeFile(fakeBlob(''), 'take');
+    assert.equal(f.type, 'video/mp4');
+    assert.equal(f.name, 'take.mp4');
+});
