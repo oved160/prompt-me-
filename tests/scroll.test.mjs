@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stepScroll, FOCUS_RATIO, MAX_FRAME_SECONDS } from '../js/scroll.js';
+import { stepScroll, naturalPace, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
 
 test('constant mode advances at 40px per second at speed 1', () => {
     // One second of real 60fps frames, rather than one impossible 1s frame.
@@ -33,10 +33,35 @@ test('a long frame gap cannot launch the reader down the page', () => {
 test('voice mode eases toward the current word, never snapping', () => {
     const viewportHeight = 800;
     const wordTop = 1000;
-    const target = wordTop - viewportHeight * FOCUS_RATIO; // 664
-    const next = stepScroll(0, { dt: 0.016, voiceMode: true, wordTop, viewportHeight });
-    assert.ok(next > 0 && next < target, `expected partial move, got ${next}`);
-    assert.equal(Math.round(next), Math.round(target * 0.08));
+    const target = wordTop - viewportHeight * FOCUS_RATIO;
+    const next = stepScroll(0, { dt: 1 / 60, voiceMode: true, wordTop, viewportHeight });
+    assert.ok(next > 0, 'should move toward the word');
+    assert.ok(next < target, `should not snap straight to it, got ${next} of ${target}`);
+});
+
+test('the same second of easing covers the same ground at any framerate', () => {
+    // A fraction-per-frame ease made a 120Hz phone pace twice as fast as a
+    // 60Hz one. One second of catching up must be one second either way.
+    const opts = { voiceMode: true, wordTop: 1000, viewportHeight: 800 };
+    const run = (fps) => {
+        let p = 0;
+        for (let i = 0; i < fps; i++) p = stepScroll(p, { ...opts, dt: 1 / fps });
+        return p;
+    };
+    const at60 = run(60);
+    const at120 = run(120);
+    const at30 = run(30);
+    assert.ok(Math.abs(at60 - at120) < 1, `60Hz ${at60} vs 120Hz ${at120}`);
+    assert.ok(Math.abs(at60 - at30) < 1, `60Hz ${at60} vs 30Hz ${at30}`);
+});
+
+test('it catches up with a reader within a sensible time', () => {
+    // Falling a screen behind and taking many seconds to recover is what makes
+    // a prompter feel like it is lagging.
+    const target = 1000 - 800 * FOCUS_RATIO;
+    let p = 0;
+    for (let i = 0; i < 30; i++) p = stepScroll(p, { dt: 1 / 60, voiceMode: true, wordTop: 1000, viewportHeight: 800 });
+    assert.ok(p > target * 0.9, `only covered ${Math.round((p / target) * 100)}% of the gap in half a second`);
 });
 
 test('easing converges on the target without overshooting', () => {
@@ -78,4 +103,28 @@ test('easing also respects the end of the script', () => {
 test('a negative or zero delta never moves the position backwards', () => {
     assert.equal(stepScroll(50, { dt: 0, speed: 2 }), 50);
     assert.equal(stepScroll(50, { dt: -5, speed: 2 }), 50);
+});
+
+test('the natural pace comes from the script, not a fixed guess', () => {
+    // 140 words at 140wpm is one minute; 6000px of script over 60s is 100px/s.
+    assert.equal(naturalPace(6000, 140), 100);
+    // A longer script over the same height reads faster per word, so scrolls slower.
+    assert.ok(naturalPace(6000, 280) < naturalPace(6000, 140) * 1.01);
+    assert.ok(naturalPace(6000, 280) > 0);
+});
+
+test('the natural pace falls back rather than dividing by nothing', () => {
+    assert.equal(naturalPace(0, 140), PIXELS_PER_SPEED_UNIT);
+    assert.equal(naturalPace(6000, 0), PIXELS_PER_SPEED_UNIT);
+    assert.equal(naturalPace(NaN, 10), PIXELS_PER_SPEED_UNIT);
+    assert.equal(naturalPace(6000, 140, 0), PIXELS_PER_SPEED_UNIT);
+});
+
+test('a script paced naturally finishes in about its estimated reading time', () => {
+    const contentHeight = 6000;
+    const words = 140;                       // one minute at 140wpm
+    const basePxPerSec = naturalPace(contentHeight, words);
+    let p = 0;
+    for (let i = 0; i < 60 * 60; i++) p = stepScroll(p, { dt: 1 / 60, speed: 1, basePxPerSec });
+    assert.ok(Math.abs(p - contentHeight) < 5, `after a minute it had covered ${Math.round(p)} of ${contentHeight}px`);
 });

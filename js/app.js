@@ -1,10 +1,11 @@
 import { ScriptMatcher, tokenize } from './matcher.js';
 import { SpeechListener, isSpeechSupported } from './speech.js';
 import { Recorder, saveRecording, pickMimeType } from './recorder.js';
-import { stepScroll, FOCUS_RATIO } from './scroll.js';
+import { stepScroll, naturalPace, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
 import { SpeechActivity, rmsOf } from './voicelevel.js';
+import { coverCrop, verticalSize } from './framing.js';
 
 const STORE_KEY = 'prompt-me';
 
@@ -57,6 +58,10 @@ let levelAnalyser = null;
 let levelBuffer = null;
 let levelPacing = false;
 const levelDetector = new SpeechActivity();
+let composeCanvas = null;  // canvas the vertical recording is drawn onto
+let composeHandle = null;
+let recordStream = null;   // what MediaRecorder is actually fed
+let basePxPerSec = 40;     // the script's own reading pace, in pixels per second
 
 const dom = {};
 for (const id of [
@@ -248,6 +253,7 @@ async function acquireMicForRecording() {
             audio: { echoCancellation: true, noiseSuppression: true },
         });
         mic.getAudioTracks().forEach(t => stream.addTrack(t));
+        recordStream = buildVerticalStream(mic);
         // Word matching is gone for the take, but the recording's own audio can
         // still say when the reader is talking, which is enough to keep pace.
         if (wantedVoice) startLevelPacing(mic);
@@ -257,6 +263,50 @@ async function acquireMicForRecording() {
         showStatus('Recording without sound: the microphone could not be opened.');
         return false;
     }
+}
+
+/**
+ * Builds the stream that actually gets recorded: the camera frame cropped to
+ * vertical on a canvas, plus the microphone.
+ *
+ * Phones shoot vertical, so that is the default. Doing the crop here rather
+ * than asking the camera for a portrait shape is what avoids the zoom, and it
+ * has a better property besides: the crop is the same one the preview applies,
+ * so the file matches what the reader framed up.
+ */
+function buildVerticalStream(micStream) {
+    const video = dom['camera'];
+    const srcW = video.videoWidth;
+    const srcH = video.videoHeight;
+    const { width, height } = verticalSize(srcW, srcH);
+
+    composeCanvas = document.createElement('canvas');
+    composeCanvas.width = width;
+    composeCanvas.height = height;
+    const ctx = composeCanvas.getContext('2d', { alpha: false });
+
+    const draw = () => {
+        if (!composeCanvas) return;
+        // Read the size every frame: a camera can renegotiate mid-session.
+        const w = video.videoWidth || srcW;
+        const h = video.videoHeight || srcH;
+        if (w && h) {
+            const { sx, sy, sw, sh } = coverCrop(w, h, width, height);
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+        }
+        composeHandle = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const composed = composeCanvas.captureStream(30);
+    micStream.getAudioTracks().forEach(t => composed.addTrack(t));
+    return composed;
+}
+
+function stopVerticalStream() {
+    if (composeHandle !== null) cancelAnimationFrame(composeHandle);
+    composeHandle = null;
+    composeCanvas = null;
 }
 
 /**
@@ -496,6 +546,7 @@ async function openCamera() {
  */
 function closeCamera() {
     stopLevelPacing();
+    stopVerticalStream();
     setVoice(false);
     listener = null;
     clearInterval(stallTimer);
@@ -610,7 +661,20 @@ function buildScript(text) {
         frag.appendChild(line);
     }
     dom['script-text'].appendChild(frag);
+    measurePace();
     paintProgress();
+}
+
+/**
+ * How fast the script should scroll when nothing is pacing it by voice, taken
+ * from the script's own length rather than a fixed number of pixels a second.
+ * A short script and a long one used to crawl at exactly the same rate.
+ */
+function measurePace() {
+    const first = wordSpans[0];
+    const last = wordSpans[wordSpans.length - 1];
+    const height = first && last ? last.offsetTop - first.offsetTop : 0;
+    basePxPerSec = naturalPace(height, wordSpans.length, WORDS_PER_MINUTE);
 }
 
 async function runCountdown() {
@@ -655,6 +719,7 @@ function scrollLoop(now) {
         speed: parseFloat(dom['speed-range'].value),
         wordTop: currentSpan ? currentSpan.offsetTop : null,
         viewportHeight: window.innerHeight,
+        basePxPerSec,
         // Stop once the final line has settled around the focus point.
         maxPosition: lastSpan ? lastSpan.offsetTop - window.innerHeight * FOCUS_RATIO : Infinity,
     });
@@ -985,7 +1050,7 @@ async function runRecordingToggle() {
     if (!hasStarted) await beginReading();
 
     await acquireMicForRecording();
-    recorder = new Recorder(stream);
+    recorder = new Recorder(recordStream || stream);
     recorder.start();
 
     // The slate advances the moment you roll, so a session of retries is
@@ -1030,6 +1095,7 @@ function toggleRecordingPause() {
 
 async function finishRecording() {
     stopLevelPacing();
+    stopVerticalStream();
     // Read the clock before stopping: an inactive recorder reports zero.
     const elapsed = recorder.elapsedMs;
     const blob = await recorder.stop();
