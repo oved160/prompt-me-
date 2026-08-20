@@ -1,7 +1,7 @@
 import { ScriptMatcher, tokenize } from './matcher.js';
 import { SpeechListener, isSpeechSupported } from './speech.js';
 import { Recorder, saveRecording, pickMimeType } from './recorder.js';
-import { stepScroll, naturalPace, FOCUS_RATIO } from './scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
 import { SpeechActivity, rmsOf } from './voicelevel.js';
@@ -70,6 +70,8 @@ let composeCanvas = null;  // canvas the vertical recording is drawn onto
 let composeHandle = null;
 let recordStream = null;   // what MediaRecorder is actually fed
 let basePxPerSec = 40;     // the script's own reading pace, in pixels per second
+let takeVoiceWatch = null; // watchdog deciding whether word tracking survives a take
+let wordTops = [];         // each word's offsetTop, for locating the focus point
 
 const dom = {};
 for (const id of [
@@ -256,24 +258,53 @@ function paintHearing() {
  * whole session the way it used to be.
  */
 async function acquireMicForRecording() {
-    const wantedVoice = isVoiceMode;
-    if (isVoiceMode) setVoice(false);
-
     try {
         const mic = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
         });
         mic.getAudioTracks().forEach(t => stream.addTrack(t));
         recordStream = buildVerticalStream(mic);
-        // Word matching is gone for the take, but the recording's own audio can
-        // still say when the reader is talking, which is enough to keep pace.
-        if (wantedVoice) startLevelPacing(mic);
+
+        // Set the sound-level graph up, but do not pace by it yet. Real word
+        // tracking is better, so try to keep it and only fall back if this
+        // device genuinely refuses to run both at once.
+        prepareLevelPacing(mic);
+        if (isVoiceMode) watchWordTrackingDuringTake();
+        else levelPacing = true;
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
         showStatus('Recording without sound: the microphone could not be opened.');
         return false;
     }
+}
+
+/**
+ * Word tracking used to be switched off the moment a recording started, on the
+ * strength of one device where the two could not share the microphone. That
+ * made the take pace by loudness alone, which moves the script while you make
+ * noise without knowing which word you are on. It is worth trying the real
+ * thing first: plenty of hardware runs both.
+ *
+ * So recognition keeps running, and only if no word arrives in the first few
+ * seconds of the take does the app conclude this phone cannot do it and drop
+ * to pacing by sound.
+ */
+function watchWordTrackingDuringTake() {
+    clearTimeout(takeVoiceWatch);
+    const heardAtStart = voiceHeard;
+    takeVoiceWatch = setTimeout(() => {
+        if (!recorder || recorder.state === 'inactive') return;
+        if (voiceHeard > heardAtStart) return; // recognition survived, leave it alone
+        fallBackToLevelPacing();
+    }, 6000);
+}
+
+function fallBackToLevelPacing() {
+    if (levelPacing) return;
+    if (isVoiceMode) setVoice(false);
+    levelPacing = true;
+    showStatus('This phone cannot listen for words while recording, so the script follows the sound of your voice instead.');
 }
 
 /**
@@ -326,7 +357,8 @@ function stopVerticalStream() {
  * voice, which is as close to voice pacing as is possible while a recording
  * owns the microphone.
  */
-function startLevelPacing(micStream) {
+/** Builds the analyser but does not pace by it: that is decided separately. */
+function prepareLevelPacing(micStream) {
     stopLevelPacing();
     try {
         levelContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -337,12 +369,10 @@ function startLevelPacing(micStream) {
         source.connect(levelAnalyser);
         levelBuffer = new Float32Array(levelAnalyser.fftSize);
         levelDetector.reset();
-        levelPacing = true;
-        showStatus('Following your voice by sound while recording.');
     } catch {
-        // No Web Audio: fall back to the steady speed rather than freezing.
-        levelPacing = false;
-        showStatus('Recording — the script scrolls at a steady speed.');
+        // No Web Audio: the steady speed is the only fallback left.
+        levelAnalyser = null;
+        levelBuffer = null;
     }
 }
 
@@ -561,6 +591,7 @@ async function openCamera() {
  * The script and its position are left alone so a retake can pick them up.
  */
 function closeCamera() {
+    clearTimeout(takeVoiceWatch);
     stopLevelPacing();
     stopVerticalStream();
     setVoice(false);
@@ -678,6 +709,7 @@ function buildScript(text) {
     }
     dom['script-text'].appendChild(frag);
     measurePace();
+    wordTops = wordSpans.map(w => w.offsetTop);
     paintProgress();
 }
 
@@ -687,6 +719,7 @@ function buildScript(text) {
  * A short script and a long one used to crawl at exactly the same rate.
  */
 function measurePace() {
+    wordTops = wordSpans.map(w => w.offsetTop);
     const first = wordSpans[0];
     const last = wordSpans[wordSpans.length - 1];
     const height = first && last ? last.offsetTop - first.offsetTop : 0;
@@ -739,6 +772,14 @@ function scrollLoop(now) {
         // Stop once the final line has settled around the focus point.
         maxPosition: lastSpan ? lastSpan.offsetTop - window.innerHeight * FOCUS_RATIO : Infinity,
     });
+
+    // Pacing by sound knows nothing about words, but it does know where it has
+    // scrolled to. Showing that keeps the highlight meaningful instead of
+    // leaving it stuck on a word the reader passed long ago.
+    if (levelPacing && wordTops.length) {
+        const focusY = scrollPosition + window.innerHeight * FOCUS_RATIO;
+        paintCursor(nearestWordIndex(wordTops, focusY));
+    }
 
     dom['script-text'].style.transform = `translate3d(0, ${-scrollPosition}px, 0)`;
     rafHandle = requestAnimationFrame(scrollLoop);
@@ -840,6 +881,12 @@ function setupVoice() {
             if (state in friendly) showStatus(friendly[state]);
         },
         onError: (message) => {
+            // Losing recognition during a take is the contention case: switch
+            // to sound pacing rather than leaving the script stranded.
+            if (recorder && recorder.state !== 'inactive') {
+                fallBackToLevelPacing();
+                return;
+            }
             voiceState = 'error';
             voiceError = message;
             paintVoiceState();
@@ -898,9 +945,9 @@ function resetTranscript() {
     feeder.reset();
 }
 
-function paintProgress() {
-    const cursor = matcher ? matcher.cursor : 0;
-    if (cursor === lastPaintedCursor) return;
+/** Moves the highlight to a word. Shared by recognition and by sound pacing. */
+function paintCursor(cursor) {
+    if (cursor < 0 || cursor === lastPaintedCursor) return;
 
     // Only repaint the span range that changed. Touching every span on each
     // result makes long scripts stutter.
@@ -911,6 +958,13 @@ function paintProgress() {
         wordSpans[i].classList.toggle('current', i === cursor);
     }
     lastPaintedCursor = cursor;
+}
+
+function paintProgress() {
+    const cursor = matcher ? matcher.cursor : 0;
+    if (cursor === lastPaintedCursor) return;
+
+    paintCursor(cursor);
     lastAdvanceAt = performance.now();
     if (dom['status'].dataset.stalled) {
         showStatus('');
@@ -1110,6 +1164,7 @@ function toggleRecordingPause() {
 }
 
 async function finishRecording() {
+    clearTimeout(takeVoiceWatch);
     stopLevelPacing();
     stopVerticalStream();
     // Read the clock before stopping: an inactive recorder reports zero.

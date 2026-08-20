@@ -61,6 +61,32 @@ export function stepScroll(position, {
 }
 
 /**
+ * The word sitting closest to the focus point, given each word's offset.
+ *
+ * Used when the script is pacing by sound rather than by recognition: nothing
+ * knows which word was spoken, but the prompter still knows where it has
+ * scrolled to, and showing that is honest where inventing a position is not.
+ *
+ * @param {number[]} tops    each word's offsetTop, ascending
+ * @param {number} focusY    the position under the focus line
+ * @returns {number} index of the nearest word, -1 when there are none
+ */
+export function nearestWordIndex(tops, focusY) {
+    if (!tops || tops.length === 0) return -1;
+
+    let lo = 0;
+    let hi = tops.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (tops[mid] < focusY) lo = mid + 1;
+        else hi = mid;
+    }
+    // lo is the first word at or past the focus point; the one before it may sit closer.
+    if (lo > 0 && Math.abs(tops[lo - 1] - focusY) <= Math.abs(tops[lo] - focusY)) return lo - 1;
+    return lo;
+}
+
+/**
  * The pace a script reads at, in pixels per second, from its own length.
  *
  * A fixed 40px/s is a guess that suits one font size and one script. Deriving

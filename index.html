@@ -486,7 +486,20 @@
             transition: color 260ms var(--ease);
         }
         .word.said { color: var(--bone-faint); }
-        .word.current { color: var(--bone); }
+
+        /* The word to say next, marked like a highlighter pen.
+           The padding is drawn with box-shadow rather than actual padding: real
+           padding changes the word's width, which reflows the line every time
+           the highlight moves and makes the whole script twitch. A shadow
+           paints outside the box without touching layout. */
+        .word.current {
+            color: var(--ink);
+            background: var(--bone);
+            border-radius: 0.16em;
+            box-shadow: 0 0 0 0.14em var(--bone);
+            /* The glyph scrim behind the script would muddy dark-on-light. */
+            text-shadow: none;
+        }
 
         /* Readers track a prompter by line, not by word. Lifting the whole
            current line gives a much larger target than one brighter word. */

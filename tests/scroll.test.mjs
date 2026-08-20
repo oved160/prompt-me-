@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stepScroll, naturalPace, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
 
 test('constant mode advances at 40px per second at speed 1', () => {
     // One second of real 60fps frames, rather than one impossible 1s frame.
@@ -127,4 +127,28 @@ test('a script paced naturally finishes in about its estimated reading time', ()
     let p = 0;
     for (let i = 0; i < 60 * 60; i++) p = stepScroll(p, { dt: 1 / 60, speed: 1, basePxPerSec });
     assert.ok(Math.abs(p - contentHeight) < 5, `after a minute it had covered ${Math.round(p)} of ${contentHeight}px`);
+});
+
+test('the nearest word to the focus point is found', () => {
+    const tops = [0, 50, 100, 150, 200];
+    assert.equal(nearestWordIndex(tops, 0), 0);
+    assert.equal(nearestWordIndex(tops, 98), 2);
+    assert.equal(nearestWordIndex(tops, 102), 2);
+    assert.equal(nearestWordIndex(tops, 200), 4);
+    assert.equal(nearestWordIndex(tops, 9999), 4, 'past the end clamps to the last word');
+    assert.equal(nearestWordIndex(tops, -50), 0, 'before the start clamps to the first');
+});
+
+test('ties and empty input are handled', () => {
+    assert.equal(nearestWordIndex([0, 100], 50), 0, 'an exact tie takes the earlier word');
+    assert.equal(nearestWordIndex([], 10), -1);
+    assert.equal(nearestWordIndex(null, 10), -1);
+});
+
+test('words sharing a line all have the same offset, and that is fine', () => {
+    // Several words per rendered line means repeated tops; the search must not
+    // loop or overshoot on the duplicates.
+    const tops = [0, 0, 0, 50, 50, 100];
+    const i = nearestWordIndex(tops, 50);
+    assert.ok(i === 3 || i === 4, `expected a word on the 50px line, got index ${i}`);
 });

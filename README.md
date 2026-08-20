@@ -23,13 +23,17 @@ off and everything stays local. Nothing else in the app makes a network request 
   won't throw it off.
 - **Constant-speed fallback** — a classic teleprompter with a speed slider, for when voice
   isn't working for you (noisy room, unsupported browser, or you just prefer it).
-- **Voice pacing while recording, by sound** — on real hardware the microphone goes to one
-  consumer at a time, and a recording claims it, so word-level matching cannot run during a
-  take. Instead the app listens to the loudness of the recording's own audio: the script
-  advances while you are speaking and holds still in the gaps. It cannot tell *where* you
-  are in the script, only that you are talking, which is the honest limit of the approach.
-  Word matching resumes the moment the take ends. A side effect worth knowing: the
-  microphone is only ever open while actually recording, not for the whole session.
+- **Word tracking during a take, where the phone allows it** — recognition keeps running
+  when recording starts, because plenty of hardware runs both at once. Only if no word
+  arrives in the first few seconds does the app conclude this device cannot share the
+  microphone and drop to pacing by sound: the script then advances while you speak and
+  holds in the gaps, which knows *that* you are talking but not *where* you are. It says
+  which of the two it is using. A side effect worth knowing: the microphone is only ever
+  open while actually recording, not for the whole session.
+- **The next word is marked** — the word you are about to say is highlighted like a
+  highlighter pen. When the script is pacing by sound rather than recognition the highlight
+  follows the prompter's own position, so it still shows where you are rather than
+  inventing a word it never heard.
 - **Watch it back before you keep it** — stopping a take opens a review screen with a real
   player: scrub, skip back five seconds, jump to the start, and an elapsed-of-total readout.
   Save it, shoot it again, or discard it. Nothing is written to your device until you choose
