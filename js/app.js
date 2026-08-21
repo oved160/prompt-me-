@@ -276,12 +276,22 @@ async function acquireMicForRecording() {
         // track is the only way both can run, and needs a fresh session.
         speechTrack = mic.getAudioTracks()[0] || null;
         if (isVoiceMode) {
+            // Detach the outgoing listener first. Its abort fires asynchronously
+            // and would otherwise log an "aborted"/"end" pair into the fresh
+            // session's event log, which reads like the new session dying
+            // instantly when it is really the old one finishing.
+            if (listener) {
+                listener.onEvent = null;
+                listener.onResult = null;
+                listener.onStatus = null;
+                listener.onError = null;
+            }
             setVoice(false);
             listener = null;
             setVoice(true);
         }
 
-        prepareLevelPacing(mic);
+        await prepareLevelPacing(mic);
         // Pace by sound from the very first frame. Waiting to find out whether
         // recognition survives left the script sitting still for six seconds at
         // the top of every take, which is exactly the delay it looked like.
@@ -371,10 +381,19 @@ function stopVerticalStream() {
  * owns the microphone.
  */
 /** Builds the analyser but does not pace by it: that is decided separately. */
-function prepareLevelPacing(micStream) {
+async function prepareLevelPacing(micStream) {
     stopLevelPacing();
     try {
         levelContext = new (window.AudioContext || window.webkitAudioContext)();
+        // It is built after awaiting getUserMedia, so the tap that started the
+        // take no longer counts as user activation and Android starts it
+        // suspended. A suspended context feeds the analyser pure digital
+        // silence forever, which reads exactly like a dead microphone: the gate
+        // concludes it cannot hear anything and switches itself off, leaving
+        // nothing pacing the script at all.
+        if (levelContext.state === 'suspended') {
+            await levelContext.resume().catch(() => {});
+        }
         const source = levelContext.createMediaStreamSource(micStream);
         levelAnalyser = levelContext.createAnalyser();
         levelAnalyser.fftSize = 1024;
@@ -853,7 +872,7 @@ async function buildDiagnostics() {
         // grant. Whether this build has it decides whether word tracking can
         // work at all during a recording.
         `audioTrack handed to recogniser: ${speechTrack ? speechTrack.readyState : 'none'}`,
-        `pacing: levelPacing=${levelPacing} speaking=${levelDetector.speaking}`,
+        `pacing: levelPacing=${levelPacing} speaking=${levelDetector.speaking} audioContext=${levelContext ? levelContext.state : 'none'}`,
         `mic permission: ${micPermission}`,
         `online: ${navigator.onLine}`,
         `language: ${dom['lang-select'].value}`,
