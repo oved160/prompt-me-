@@ -14,10 +14,16 @@ class FakeRecognition {
     start() {
         this.startCalls += 1;
         this.onstart?.();
+        this.aborted = false;
         // A device stuck in a tight loop ends the session the instant it opens.
         if (this.dieInstantly) setTimeout(() => this.onend?.(), 0);
     }
-    abort() { this.onend?.(); }
+    abort() {
+        // The Android failure mode this guards against: abort() on a wedged
+        // session does not necessarily produce an onend either.
+        this.aborted = true;
+        if (!this.swallowAbort) this.onend?.();
+    }
     /** Simulate Chrome ending the session on its own. */
     endSession() { this.onend?.(); }
 }
@@ -159,4 +165,50 @@ test('the backoff keeps growing while the failure persists', async () => {
         `restarts did not thin out: ${early} in the first 600ms, ${laterGrowth} in the next`);
     listener.stop();
     rec().dieInstantly = false;
+});
+
+test('a recogniser stuck repeating one interim result is torn down and restarted', async () => {
+    // Taken from a real Android log: the same interim hypothesis arrived 34
+    // times across 5.7 seconds while the reader kept talking, and `onend` never
+    // fired, so the normal restart path never ran. It looked alive from the
+    // outside while it had stopped listening.
+    const { listener, rec, events } = makeListener();
+    listener.start();
+    const startsBefore = rec().startCalls;
+
+    const stuck = 'היי קוראים לי עובד אלישע וזה הסבר קצר על';
+    for (let i = 0; i < 10; i++) {
+        rec().onresult({
+            resultIndex: 0,
+            results: [Object.assign([{ transcript: stuck }], { isFinal: false })],
+        });
+        await sleep(150);
+    }
+
+    // No onend was ever fired, exactly as on the device.
+    await sleep(3200);
+    assert.ok(rec().startCalls > startsBefore,
+        'never recovered: it was still waiting for an onend that does not come');
+    assert.ok(events.some(e => String(e).includes('stuck')) ||
+              rec().startCalls > startsBefore, 'no restart was forced');
+    listener.stop();
+});
+
+test('a recogniser making real progress is left alone', async () => {
+    // The watchdog must not interrupt a session that is genuinely transcribing.
+    const { listener, rec } = makeListener();
+    listener.start();
+    const startsBefore = rec().startCalls;
+
+    for (let i = 0; i < 12; i++) {
+        rec().onresult({
+            resultIndex: 0,
+            results: [Object.assign([{ transcript: `word ${i}` }], { isFinal: false })],
+        });
+        await sleep(300);
+    }
+
+    assert.equal(rec().startCalls, startsBefore,
+        'restarted a session that was transcribing perfectly well');
+    listener.stop();
 });

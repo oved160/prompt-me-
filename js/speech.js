@@ -14,6 +14,19 @@ const HEALTHY_SESSION_MS = 300;
 const RESTART_BASE_MS = 100;
 const RESTART_MAX_MS = 4000;
 
+/**
+ * A documented Android platform bug: mid-utterance, the native recognizer can
+ * get stuck delivering the SAME interim text over and over while the speaker
+ * keeps talking, and `onend` never fires to let the normal restart logic
+ * notice. From the outside it looks alive (events keep arriving) while it has
+ * actually stopped listening. Nothing short of tearing it down and starting a
+ * fresh session recovers it, so that is done on a timer rather than waiting
+ * for an `onend` that is not coming.
+ * https://github.com/WebAudio/web-speech-api/issues/136
+ */
+const STUCK_TRANSCRIPT_MS = 4000;
+const STUCK_CHECK_INTERVAL_MS = 1000;
+
 export const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
 export class SpeechListener {
@@ -28,6 +41,9 @@ export class SpeechListener {
     this._restartCount = 0;
     this._sessionStart = 0;
     this.restarts = 0; // exposed for diagnostics
+    this._lastTranscript = '';
+    this._lastProgressAt = 0;
+    this._stuckTimer = null;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -66,8 +82,16 @@ export class SpeechListener {
         }
       }
 
-      if (finalText || interimText) {
-        this.onEvent?.(`result "${(finalText || interimText).slice(0, 40)}"`);
+      const heard = finalText || interimText;
+      if (heard) {
+        this.onEvent?.(`result "${heard.slice(0, 40)}"`);
+        // Only text that actually advanced counts as progress. Chrome fires
+        // onresult again for the identical hypothesis while stuck, and
+        // counting those would hide the exact failure this guards against.
+        if (heard !== this._lastTranscript || finalText) {
+          this._lastTranscript = heard;
+          this._lastProgressAt = Date.now();
+        }
         this.onResult?.({ finalText, interimText });
       }
     };
@@ -136,7 +160,10 @@ export class SpeechListener {
   start() {
     this._wantRunning = true;
     this._sessionStart = Date.now();
+    this._lastTranscript = '';
+    this._lastProgressAt = Date.now();
     this.restarts += 1;
+    this._armStuckWatch();
     try {
       this.recognition.start();
     } catch (e) {
@@ -149,8 +176,48 @@ export class SpeechListener {
     }
   }
 
+  _armStuckWatch() {
+    clearInterval(this._stuckTimer);
+    this._stuckTimer = setInterval(() => {
+      if (!this._wantRunning) return;
+      if (Date.now() - this._lastProgressAt < STUCK_TRANSCRIPT_MS) return;
+      this._forceRestart();
+    }, STUCK_CHECK_INTERVAL_MS);
+    // A watchdog should never be the reason a process stays alive. Browsers
+    // have no unref, where this is a no-op; under Node it stops the timer
+    // holding the event loop open after the work is done.
+    this._stuckTimer?.unref?.();
+  }
+
+  /**
+   * Nothing new arrived for STUCK_TRANSCRIPT_MS while still supposedly
+   * listening. On the Android bug this guards against, `onend` never fires on
+   * its own to let the normal restart logic notice, so this forces the issue:
+   * abort the stuck session, and if that alone does not produce a fresh one
+   * shortly, start one directly rather than trust a browser event that has
+   * already shown it might not come.
+   */
+  _forceRestart() {
+    const sessionAtCallTime = this._sessionStart;
+    this._lastProgressAt = Date.now(); // do not re-trigger every tick while recovering
+    this.onEvent?.('stuck, forcing restart');
+    try {
+      this.recognition.abort();
+    } catch {
+      // Already on its way out.
+    }
+    setTimeout(() => {
+      if (this._wantRunning && this._sessionStart === sessionAtCallTime) {
+        // abort() did not produce a new session either; start one directly.
+        this.start();
+      }
+    }, 600);
+  }
+
   stop() {
     this._wantRunning = false;
+    clearInterval(this._stuckTimer);
+    this._stuckTimer = null;
     this.recognition.abort(); // abort() stops immediately and does not trigger a result event
   }
 }
