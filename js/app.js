@@ -72,7 +72,6 @@ let recordStream = null;   // what MediaRecorder is actually fed
 let basePxPerSec = 40;     // the script's own reading pace, in pixels per second
 let takeVoiceWatch = null; // watchdog deciding whether word tracking survives a take
 let wordTops = [];         // each word's offsetTop, for locating the focus point
-let speechTrack = null;    // mic track shared with the recogniser during a take
 
 const dom = {};
 for (const id of [
@@ -270,64 +269,34 @@ async function acquireMicForRecording() {
         // Set the sound-level graph up, but do not pace by it yet. Real word
         // tracking is better, so try to keep it and only fall back if this
         // device genuinely refuses to run both at once.
-        // Recognise from the recording's own microphone track. Android will not
-        // open a second microphone while this one is live, which is why word
-        // tracking produced literally nothing during a take. Sharing the one
-        // track is the only way both can run, and needs a fresh session.
-        speechTrack = mic.getAudioTracks()[0] || null;
-        if (isVoiceMode) {
-            // Detach the outgoing listener first. Its abort fires asynchronously
-            // and would otherwise log an "aborted"/"end" pair into the fresh
-            // session's event log, which reads like the new session dying
-            // instantly when it is really the old one finishing.
-            if (listener) {
-                listener.onEvent = null;
-                listener.onResult = null;
-                listener.onStatus = null;
-                listener.onError = null;
-            }
-            setVoice(false);
-            listener = null;
-            setVoice(true);
-        }
+        // Word tracking cannot run during a take, and this is settled rather
+        // than assumed. An isolated test on the reporting device (lab.html,
+        // TEST C) started a recorder and a recogniser side by side with no
+        // watchdogs or restarts of any kind. The recogniser fired onaudiostart,
+        // onsoundstart and onspeechstart, so it was receiving the microphone
+        // perfectly well, and then returned zero results across thirteen
+        // seconds of speech and raised no error at all. Chrome transcribes on
+        // Google's servers; the local half works and the transcription half
+        // goes silent while a recording is active.
+        //
+        // So recognition is stopped once, cleanly, rather than being torn down
+        // and restarted on three separate timers while it fails to do something
+        // it cannot do. Sound pacing carries the take, and word tracking comes
+        // straight back when the take ends.
+        if (isVoiceMode) setVoice(false);
 
         await prepareLevelPacing(mic);
         // Pace by sound from the very first frame. Waiting to find out whether
         // recognition survives left the script sitting still for six seconds at
         // the top of every take, which is exactly the delay it looked like.
         levelPacing = true;
-        if (isVoiceMode) watchWordTrackingDuringTake();
+        showStatus('Following the sound of your voice while recording.');
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
         showStatus('Recording without sound: the microphone could not be opened.');
         return false;
     }
-}
-
-/**
- * Recognition keeps running when a take starts, because plenty of hardware can
- * share the microphone with a recording. Sound pacing carries the script in the
- * meantime, and hands over the moment a real word lands.
- *
- * This only decides the losing case: if recognition has produced nothing at all
- * a few seconds in, it is not going to, so stop it rather than leave it
- * restarting into a microphone it cannot have.
- */
-function watchWordTrackingDuringTake() {
-    clearTimeout(takeVoiceWatch);
-    const heardAtStart = voiceHeard;
-    takeVoiceWatch = setTimeout(() => {
-        if (!recorder || recorder.state === 'inactive') return;
-        if (voiceHeard > heardAtStart) return; // words already took over
-        stopWordTrackingForTake();
-    }, 6000);
-}
-
-function stopWordTrackingForTake() {
-    if (isVoiceMode) setVoice(false);
-    levelPacing = true;
-    showStatus('This phone cannot listen for words while recording, so the script follows the sound of your voice instead.');
 }
 
 /**
@@ -374,12 +343,6 @@ function stopVerticalStream() {
     composeCanvas = null;
 }
 
-/**
- * Listens to the loudness of the recording's audio and reports whether the
- * reader is speaking. The scroll loop uses it to advance only while there is a
- * voice, which is as close to voice pacing as is possible while a recording
- * owns the microphone.
- */
 /** Builds the analyser but does not pace by it: that is decided separately. */
 async function prepareLevelPacing(micStream) {
     stopLevelPacing();
@@ -649,7 +612,6 @@ function closeCamera() {
     clearInterval(stallTimer);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null;
-    speechTrack = null;
     dom['camera'].srcObject = null;
     releaseWakeLock();
     setPaused(true, true);
@@ -871,7 +833,6 @@ async function buildDiagnostics() {
         // hold, instead of opening a second microphone that Android refuses to
         // grant. Whether this build has it decides whether word tracking can
         // work at all during a recording.
-        `audioTrack handed to recogniser: ${speechTrack ? speechTrack.readyState : 'none'}`,
         `pacing: levelPacing=${levelPacing} speaking=${levelDetector.speaking} audioContext=${levelContext ? levelContext.state : 'none'}`,
         `mic permission: ${micPermission}`,
         `online: ${navigator.onLine}`,
@@ -905,7 +866,6 @@ function setupVoice() {
     voiceLog.length = 0;
     listener = new SpeechListener({
         lang: dom['lang-select'].value,
-        audioTrack: speechTrack,
         onEvent: logVoice,
         onResult: ({ finalText, interimText }) => {
             // Counted even while paused: it is the proof that the microphone and
@@ -945,12 +905,6 @@ function setupVoice() {
             if (state in friendly) showStatus(friendly[state]);
         },
         onError: (message) => {
-            // Losing recognition during a take is the contention case: switch
-            // to sound pacing rather than leaving the script stranded.
-            if (recorder && recorder.state !== 'inactive') {
-                stopWordTrackingForTake();
-                return;
-            }
             voiceState = 'error';
             voiceError = message;
             paintVoiceState();
@@ -1484,7 +1438,6 @@ function stopAll() {
     listener = null;
     recorder = null;
     stream = null;
-    speechTrack = null;
     isVoiceMode = false;
     isPaused = false;
     showStatus('');
