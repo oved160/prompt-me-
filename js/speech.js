@@ -30,8 +30,20 @@ const STUCK_CHECK_INTERVAL_MS = 1000;
 export const isSpeechSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
 export class SpeechListener {
-  constructor({ lang = 'en-US', onResult, onStatus, onError, onEvent } = {}) {
+  constructor({ lang = 'en-US', onResult, onStatus, onError, onEvent, audioTrack = null } = {}) {
     this.lang = lang;
+    /**
+     * An existing microphone track to recognise from, rather than letting the
+     * recogniser open its own. Android will not hand the microphone to a second
+     * consumer while a recording holds it, so without this, word tracking
+     * during a take is impossible: recognition starts, reports no error, and
+     * returns nothing at all.
+     *
+     * Older builds ignore the argument silently, since JavaScript drops extra
+     * arguments, so passing it is safe. Whether it took effect is answered by
+     * whether words actually arrive, which is already being watched for.
+     */
+    this.audioTrack = audioTrack;
     this.onResult = onResult;
     this.onStatus = onStatus;
     this.onError = onError;
@@ -165,7 +177,16 @@ export class SpeechListener {
     this.restarts += 1;
     this._armStuckWatch();
     try {
-      this.recognition.start();
+      // The spec requires a live audio track; a stale one throws InvalidStateError
+      // and would take recognition down with it.
+      const usable = this.audioTrack && this.audioTrack.readyState === 'live'
+        && this.audioTrack.kind === 'audio';
+      if (usable) {
+        this.onEvent?.('start with shared audio track');
+        this.recognition.start(this.audioTrack);
+      } else {
+        this.recognition.start();
+      }
     } catch (e) {
       // Chrome throws InvalidStateError if start() is called while already running.
       // We swallow this because the intent is simply "ensure it is running".

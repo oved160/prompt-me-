@@ -11,7 +11,8 @@ class FakeRecognition {
         FakeRecognition.instances.push(this);
         this.startCalls = 0;
     }
-    start() {
+    start(audioTrack) {
+        this.startedWith = audioTrack;
         this.startCalls += 1;
         this.onstart?.();
         this.aborted = false;
@@ -210,5 +211,37 @@ test('a recogniser making real progress is left alone', async () => {
 
     assert.equal(rec().startCalls, startsBefore,
         'restarted a session that was transcribing perfectly well');
+    listener.stop();
+});
+
+test('an existing audio track is handed to the recogniser', async () => {
+    // Android refuses a second microphone while a recording holds one, so
+    // sharing the track we already own is the only way word tracking can run
+    // during a take.
+    FakeRecognition.instances = [];
+    const track = { kind: 'audio', readyState: 'live' };
+    const listener = new SpeechListener({ audioTrack: track });
+    listener.start();
+    assert.equal(FakeRecognition.instances[0].startedWith, track,
+        'the recogniser opened its own microphone instead of using the track');
+    listener.stop();
+});
+
+test('a dead track is not passed, since that throws and kills recognition', async () => {
+    // The spec throws InvalidStateError unless the track is live.
+    FakeRecognition.instances = [];
+    const listener = new SpeechListener({ audioTrack: { kind: 'audio', readyState: 'ended' } });
+    listener.start();
+    assert.equal(FakeRecognition.instances[0].startedWith, undefined,
+        'passed a track that would have thrown');
+    assert.ok(listener.running, 'recognition should still have started normally');
+    listener.stop();
+});
+
+test('with no track supplied it opens the microphone as before', async () => {
+    FakeRecognition.instances = [];
+    const listener = new SpeechListener({});
+    listener.start();
+    assert.equal(FakeRecognition.instances[0].startedWith, undefined);
     listener.stop();
 });

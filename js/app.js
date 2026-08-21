@@ -72,6 +72,7 @@ let recordStream = null;   // what MediaRecorder is actually fed
 let basePxPerSec = 40;     // the script's own reading pace, in pixels per second
 let takeVoiceWatch = null; // watchdog deciding whether word tracking survives a take
 let wordTops = [];         // each word's offsetTop, for locating the focus point
+let speechTrack = null;    // mic track shared with the recogniser during a take
 
 const dom = {};
 for (const id of [
@@ -269,6 +270,17 @@ async function acquireMicForRecording() {
         // Set the sound-level graph up, but do not pace by it yet. Real word
         // tracking is better, so try to keep it and only fall back if this
         // device genuinely refuses to run both at once.
+        // Recognise from the recording's own microphone track. Android will not
+        // open a second microphone while this one is live, which is why word
+        // tracking produced literally nothing during a take. Sharing the one
+        // track is the only way both can run, and needs a fresh session.
+        speechTrack = mic.getAudioTracks()[0] || null;
+        if (isVoiceMode) {
+            setVoice(false);
+            listener = null;
+            setVoice(true);
+        }
+
         prepareLevelPacing(mic);
         // Pace by sound from the very first frame. Waiting to find out whether
         // recognition survives left the script sitting still for six seconds at
@@ -618,6 +630,7 @@ function closeCamera() {
     clearInterval(stallTimer);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null;
+    speechTrack = null;
     dom['camera'].srcObject = null;
     releaseWakeLock();
     setPaused(true, true);
@@ -835,6 +848,12 @@ async function buildDiagnostics() {
         `Prompt Me diagnostics`,
         `browser: ${navigator.userAgent}`,
         `speech api: ${window.SpeechRecognition ? 'SpeechRecognition' : ''}${window.webkitSpeechRecognition ? ' webkitSpeechRecognition' : ''} (supported=${isSpeechSupported})`,
+        // start(audioTrack) lets the recogniser share the track we already
+        // hold, instead of opening a second microphone that Android refuses to
+        // grant. Whether this build has it decides whether word tracking can
+        // work at all during a recording.
+        `audioTrack handed to recogniser: ${speechTrack ? speechTrack.readyState : 'none'}`,
+        `pacing: levelPacing=${levelPacing} speaking=${levelDetector.speaking}`,
         `mic permission: ${micPermission}`,
         `online: ${navigator.onLine}`,
         `language: ${dom['lang-select'].value}`,
@@ -867,6 +886,7 @@ function setupVoice() {
     voiceLog.length = 0;
     listener = new SpeechListener({
         lang: dom['lang-select'].value,
+        audioTrack: speechTrack,
         onEvent: logVoice,
         onResult: ({ finalText, interimText }) => {
             // Counted even while paused: it is the proof that the microphone and
@@ -1445,6 +1465,7 @@ function stopAll() {
     listener = null;
     recorder = null;
     stream = null;
+    speechTrack = null;
     isVoiceMode = false;
     isPaused = false;
     showStatus('');
