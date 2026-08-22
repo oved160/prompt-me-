@@ -29,7 +29,18 @@ export const LIMITS = {
     minFps: 24,
     bitrateFloorRatio: 0.8,   // 20% below the no-load baseline
     maxJitterMs: 4000,
-    maxDeclineRatio: 0.9,     // the late window may not sit 10% under the early one
+    /**
+     * How many extra percentage points of early-to-late decline a run may show
+     * beyond what the no-load baseline itself already shows.
+     *
+     * A fixed ceiling here has the same problem maxJitterMs had: the first real
+     * device run showed a genuine ~14% bitrate dip with ZERO added load — almost
+     * certainly the camera's own bitrate adapting to how much the scene moved,
+     * not compute. A fixed 10% ceiling fails every run for that reason alone,
+     * load or no load, and stops answering the only question this check exists
+     * for: does ADDED load make it worse than the phone already is at rest.
+     */
+    declineMarginPct: 10,
 };
 
 export function median(xs) {
@@ -138,21 +149,53 @@ export function judge(run, baseline = null) {
     }
 
     // Sustained degradation. An addition to the five agreed thresholds, and the
-    // entire reason for sampling a series: a phone shedding 10% in ninety
-    // seconds has not finished shedding, and a three minute take crosses the
-    // floor. Deliberately fires even when both windows sit above the floor.
+    // entire reason for sampling a series: a phone shedding performance in
+    // ninety seconds has not finished shedding, and a three minute take crosses
+    // the floor. Judged against the no-load baseline's OWN early-to-late change,
+    // not a fixed number — see declineMarginPct above.
     const early = windowOf(run, EARLY_WINDOW);
     const late = windowOf(run, LATE_WINDOW);
     if (early) early.kbps = windowRawKbps(run, EARLY_WINDOW) ?? early.kbps;
     if (late) late.kbps = windowRawKbps(run, LATE_WINDOW) ?? late.kbps;
-    if (early && late) {
-        if (late.fps < early.fps * LIMITS.maxDeclineRatio) {
-            fails.push(`fps declined ${Math.round(100 - (late.fps / early.fps) * 100)}% ` +
-                       `(${early.fps.toFixed(1)} → ${late.fps.toFixed(1)}) — throttling`);
+
+    let baselineDeclinePct = null;
+    if (baseline && baseline !== run) {
+        const bEarly = windowOf(baseline, EARLY_WINDOW);
+        const bLate = windowOf(baseline, LATE_WINDOW);
+        if (bEarly && bLate) {
+            const bEarlyKbps = windowRawKbps(baseline, EARLY_WINDOW) ?? bEarly.kbps;
+            const bLateKbps = windowRawKbps(baseline, LATE_WINDOW) ?? bLate.kbps;
+            baselineDeclinePct = {
+                fps: bEarly.fps > 0 ? 100 * (1 - bLate.fps / bEarly.fps) : 0,
+                kbps: bEarlyKbps > 0 ? 100 * (1 - bLateKbps / bEarlyKbps) : 0,
+            };
         }
-        if (early.kbps > 0 && late.kbps < early.kbps * LIMITS.maxDeclineRatio) {
-            fails.push(`bitrate declined ${Math.round(100 - (late.kbps / early.kbps) * 100)}% ` +
-                       `(${early.kbps} → ${late.kbps} kbps) — throttling`);
+    }
+
+    if (early && late) {
+        const fpsDeclinePct = early.fps > 0 ? 100 * (1 - late.fps / early.fps) : 0;
+        const kbpsDeclinePct = early.kbps > 0 ? 100 * (1 - late.kbps / early.kbps) : 0;
+
+        // No independent baseline: this run either IS the baseline being
+        // established, or none exists yet. Judging it against a decline of 0%
+        // would fail the baseline on its own normal behaviour the moment it is
+        // first recorded — exactly what happened to the very first 90s run of
+        // this project, which showed a genuine 14% dip and would otherwise have
+        // failed before there was anything to compare it to.
+        if (!baselineDeclinePct) {
+            notes.push(`no independent baseline to judge this run's own decline against ` +
+                       `(fps ${Math.round(fpsDeclinePct)}%, bitrate ${Math.round(kbpsDeclinePct)}%)`);
+        } else {
+            if (fpsDeclinePct > baselineDeclinePct.fps + LIMITS.declineMarginPct) {
+                fails.push(`fps declined ${Math.round(fpsDeclinePct)}% ` +
+                           `(${early.fps.toFixed(1)} → ${late.fps.toFixed(1)}), ` +
+                           `more than the ${Math.round(baselineDeclinePct.fps)}% this phone shows at rest — throttling`);
+            }
+            if (kbpsDeclinePct > baselineDeclinePct.kbps + LIMITS.declineMarginPct) {
+                fails.push(`bitrate declined ${Math.round(kbpsDeclinePct)}% ` +
+                           `(${early.kbps} → ${late.kbps} kbps), ` +
+                           `more than the ${Math.round(baselineDeclinePct.kbps)}% this phone shows at rest — throttling`);
+            }
         }
     } else if (run.seconds >= 90) {
         notes.push('early or late window incomplete, degradation not assessed');

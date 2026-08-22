@@ -126,6 +126,35 @@ test('a small wobble is not called throttling', () => {
     assert.deepEqual(fails, [], `normal variance was reported as throttling: ${fails}`);
 });
 
+test('a decline the baseline itself already shows is not blamed on the run', () => {
+    // The second real device bug: E2 (zero load) showed a genuine 14% bitrate
+    // dip, early to late — almost certainly the camera's own bitrate adapting
+    // to scene motion, nothing to do with compute. E3 (25% load) then showed a
+    // near-identical 15% dip. A fixed 10% ceiling would fail both for the same
+    // reason and tell us nothing about whether the added load mattered.
+    const baseline = makeRun(90, (t) => ({
+        bytes: t < 40 ? 1_100_000 : 950_000, // ~14% down, same shape as the real device
+    }));
+    const run = makeRun(90, (t) => ({
+        bytes: t < 40 ? 1_100_000 : 940_000, // ~15% down: statistically the same dip
+    }));
+    const { fails } = judge(run, baseline);
+    assert.ok(!fails.some((f) => f.includes('throttling')),
+        `a run matching the baseline's own natural dip was blamed for it: ${fails}`);
+});
+
+test('a decline meaningfully worse than the baseline still fails', () => {
+    const baseline = makeRun(90, (t) => ({
+        bytes: t < 40 ? 1_100_000 : 950_000, // ~14% down at rest
+    }));
+    const run = makeRun(90, (t) => ({
+        bytes: t < 40 ? 1_100_000 : 500_000, // ~55% down under load: genuinely worse
+    }));
+    const { fails } = judge(run, baseline);
+    assert.ok(fails.some((f) => f.includes('throttling')),
+        `a decline far beyond the baseline's own was not caught: ${fails}`);
+});
+
 test('a short run says degradation was not assessed rather than passing it silently', () => {
     const run = makeRun(20);
     const { fails, notes } = judge(run, healthy());
@@ -144,6 +173,18 @@ test('the baseline is not judged against itself', () => {
     const base = healthy();
     const { fails } = judge(base, base);
     assert.deepEqual(fails, [], `the baseline failed its own comparison: ${fails}`);
+});
+
+test('a baseline with a genuine decline does not fail on its own first reading', () => {
+    // The exact bug the previous test's flat fixture hid: at the moment E2 is
+    // first recorded it IS the stored baseline, so `results.get('baseline90')`
+    // returns the very same object being judged. Comparing its real 14% dip
+    // against a decline of 0% would fail the baseline before anything exists
+    // to compare it to — which is what actually happened until this was caught.
+    const run = makeRun(90, (t) => ({ bytes: t < 40 ? 1_100_000 : 950_000 })); // ~14% down
+    const { fails, notes } = judge(run, run);
+    assert.deepEqual(fails, [], `a baseline was blamed for its own first-ever reading: ${fails}`);
+    assert.ok(notes.some((n) => n.includes('no independent baseline')), `no note explaining why: ${notes}`);
 });
 
 test('a backgrounded run is void, not failed', () => {

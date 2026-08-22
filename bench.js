@@ -19,7 +19,7 @@ import {
 } from './bench-analysis.js';
 
 const dom = {};
-for (const id of ['log', 'verdict', 'charts', 'runs', 'preview', 'copy', 'csv', 'runall']) {
+for (const id of ['log', 'verdict', 'charts', 'runs', 'preview', 'copy', 'csv', 'runall', 'clearRuns']) {
     dom[id] = document.getElementById(id);
 }
 
@@ -27,6 +27,54 @@ let lines = [];
 let t0 = 0;
 /** Every completed run, keyed by id, so later runs can be judged against the baseline. */
 const results = new Map();
+
+// ---------------------------------------------------------------------------
+// Persistence
+//
+// A phone test session is not one page load: a reload, a browser crash, or the
+// tab getting reclaimed while the phone was set down between runs all end the
+// in-memory results. The very first real device session hit this — E2's
+// baseline was gone on the next load, so E3 could not be judged against it and
+// the "no baseline yet" note was mistaken for a passing signal. Every run is
+// small (a few hundred samples of plain numbers), so persisting all of them
+// costs nothing and removes the failure mode outright.
+// ---------------------------------------------------------------------------
+
+const STORAGE_PREFIX = 'bench-e:';
+
+function persistRun(run) {
+    try {
+        localStorage.setItem(STORAGE_PREFIX + run.id, JSON.stringify(run));
+    } catch {
+        log('could not save this run to local storage; it will not survive a reload');
+    }
+}
+
+function restoreRuns() {
+    let restored = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
+        try {
+            const run = JSON.parse(localStorage.getItem(key));
+            results.set(run.id, run);
+            restored++;
+        } catch {
+            // A corrupted entry should not block everything else from loading.
+        }
+    }
+    return restored;
+}
+
+function clearPersisted() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+    results.clear();
+}
 
 function log(msg) {
     const t = ((performance.now() - t0) / 1000).toFixed(1).padStart(6, ' ');
@@ -340,6 +388,7 @@ async function runOne({ id, label, seconds, duty = 0, where = 'none' }) {
         finishedAt: Date.now(),
     };
     results.set(id, run);
+    persistRun(run);
     log(`${label}: ${chunks} chunks, ${(totalBytes / 1048576).toFixed(1)} MB`);
     return run;
 }
@@ -461,7 +510,7 @@ async function launch(spec) {
         log(`ua: ${navigator.userAgent}`);
         log(`cores: ${navigator.hardwareConcurrency ?? '?'} · deviceMemory: ${navigator.deviceMemory ?? '?'}GB`);
         log(`thresholds: fps>=${LIMITS.minFps}, bitrate>=${Math.round(LIMITS.bitrateFloorRatio * 100)}% of baseline, ` +
-            `jitter<=${LIMITS.maxJitterMs}ms, decline<=${Math.round((1 - LIMITS.maxDeclineRatio) * 100)}%`);
+            `jitter<=${LIMITS.maxJitterMs}ms, decline<=${LIMITS.declineMarginPct}pp beyond what this phone does at rest`);
         log('note: the web platform exposes no thermal sensor. Throttling is inferred');
         log('      from the shape of the fps and bitrate curves, not measured.');
     }
@@ -477,6 +526,16 @@ async function launch(spec) {
     } finally {
         setBusy(false);
     }
+}
+
+const restoredCount = restoreRuns();
+if (restoredCount) {
+    for (const spec of RUNS) {
+        const run = results.get(spec.id);
+        if (run) renderRun(run);
+    }
+    dom.verdict.textContent = `Restored ${restoredCount} run(s) from a previous session ` +
+        `(this survives a reload now). Pick up where you left off, or clear below to start fresh.`;
 }
 
 for (const spec of RUNS) {
@@ -524,6 +583,16 @@ dom.runall.onclick = async () => {
             log('         confounded by accumulated heat; re-run cold with longer cooldowns.');
         }
     }
+};
+
+dom.clearRuns.onclick = () => {
+    if (busy) return;
+    if (!results.size) return;
+    if (!confirm('Discard every saved run on this phone and start over?')) return;
+    clearPersisted();
+    dom.runs.innerHTML = '';
+    dom.verdict.textContent = 'Cleared. Start with E1, then E2 for a fresh baseline.';
+    log('cleared all saved runs');
 };
 
 dom.copy.onclick = async () => {
