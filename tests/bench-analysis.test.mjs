@@ -126,33 +126,29 @@ test('a small wobble is not called throttling', () => {
     assert.deepEqual(fails, [], `normal variance was reported as throttling: ${fails}`);
 });
 
-test('a decline the baseline itself already shows is not blamed on the run', () => {
-    // The second real device bug: E2 (zero load) showed a genuine 14% bitrate
-    // dip, early to late — almost certainly the camera's own bitrate adapting
-    // to scene motion, nothing to do with compute. E3 (25% load) then showed a
-    // near-identical 15% dip. A fixed 10% ceiling would fail both for the same
-    // reason and tell us nothing about whether the added load mattered.
-    const baseline = makeRun(90, (t) => ({
-        bytes: t < 40 ? 1_100_000 : 950_000, // ~14% down, same shape as the real device
-    }));
-    const run = makeRun(90, (t) => ({
-        bytes: t < 40 ? 1_100_000 : 940_000, // ~15% down: statistically the same dip
-    }));
-    const { fails } = judge(run, baseline);
+test('bitrate decline is informational, never a hard failure', () => {
+    // The third real device finding: two zero-load baselines, same phone, same
+    // test, back to back sessions — one declined 14% early to late, the other
+    // declined 0.3%. The only thing that changed was whatever was in front of
+    // the camera. A bitrate check built on that number cannot tell "the phone
+    // is struggling" from "the reader held still for a while", so it must never
+    // fail on its own — however large the swing.
+    const baseline = makeRun(90, (t) => ({ bytes: t < 40 ? 1_100_000 : 1_098_000 })); // ~0.2%
+    const run = makeRun(90, (t) => ({ bytes: t < 40 ? 1_100_000 : 400_000 })); // ~64% down
+    const { fails, notes } = judge(run, baseline);
     assert.ok(!fails.some((f) => f.includes('throttling')),
-        `a run matching the baseline's own natural dip was blamed for it: ${fails}`);
+        `bitrate swing was treated as a hard failure: ${fails}`);
+    assert.ok(notes.some((n) => n.includes('bitrate moved')), `no note recording the swing: ${notes}`);
 });
 
-test('a decline meaningfully worse than the baseline still fails', () => {
-    const baseline = makeRun(90, (t) => ({
-        bytes: t < 40 ? 1_100_000 : 950_000, // ~14% down at rest
-    }));
-    const run = makeRun(90, (t) => ({
-        bytes: t < 40 ? 1_100_000 : 500_000, // ~55% down under load: genuinely worse
-    }));
+test('an fps decline meaningfully worse than the baseline still fails', () => {
+    // fps has not shown the session-to-session swings bitrate has, so it stays
+    // a real gate: a phone that is actually falling behind shows up here.
+    const baseline = makeRun(90, (t) => ({ fps: t < 40 ? 30 : 29 })); // ~3% down at rest
+    const run = makeRun(90, (t) => ({ fps: t < 40 ? 30 : 20 })); // ~33% down under load
     const { fails } = judge(run, baseline);
-    assert.ok(fails.some((f) => f.includes('throttling')),
-        `a decline far beyond the baseline's own was not caught: ${fails}`);
+    assert.ok(fails.some((f) => f.includes('fps declined') && f.includes('throttling')),
+        `an fps decline far beyond the baseline's own was not caught: ${fails}`);
 });
 
 test('a short run says degradation was not assessed rather than passing it silently', () => {

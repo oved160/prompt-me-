@@ -191,10 +191,18 @@ export function judge(run, baseline = null) {
                            `(${early.fps.toFixed(1)} → ${late.fps.toFixed(1)}), ` +
                            `more than the ${Math.round(baselineDeclinePct.fps)}% this phone shows at rest — throttling`);
             }
-            if (kbpsDeclinePct > baselineDeclinePct.kbps + LIMITS.declineMarginPct) {
-                fails.push(`bitrate declined ${Math.round(kbpsDeclinePct)}% ` +
-                           `(${early.kbps} → ${late.kbps} kbps), ` +
-                           `more than the ${Math.round(baselineDeclinePct.kbps)}% this phone shows at rest — throttling`);
+            // Bitrate is informational only, never a hard fail here. Two real
+            // device sessions recorded a ZERO-load baseline decline of 14% in
+            // one and 0.3% in the next — same phone, same test, nothing
+            // changed but what was in front of the camera. An encoder that
+            // spends fewer bits on a still scene is doing its job; that swing
+            // has nothing to do with compute and swamps anything a real
+            // thermal effect would add on top of it. fps is the signal that
+            // actually tracks compute headroom, which is why it alone fails.
+            if (Math.abs(kbpsDeclinePct - baselineDeclinePct.kbps) > LIMITS.declineMarginPct) {
+                notes.push(`bitrate moved ${Math.round(kbpsDeclinePct)}% early-to-late ` +
+                           `(${early.kbps} → ${late.kbps} kbps) vs ${Math.round(baselineDeclinePct.kbps)}% at rest — ` +
+                           `not treated as throttling; bitrate tracks scene content on this device, not compute`);
             }
         }
     } else if (run.seconds >= 90) {
