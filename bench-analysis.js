@@ -12,11 +12,23 @@ export const WARMUP_S = 5;
 export const EARLY_WINDOW = [5, 25];
 export const LATE_WINDOW = [70, 90];
 
-/** Fixed before any run, so no result can be read as whatever we hoped for. */
+/**
+ * Fixed before any run, so no result can be read as whatever we hoped for.
+ *
+ * maxJitterMs was raised from 1500 to 4000 after the first real device run: a
+ * phone's hardware H.264 encoder does not flush `ondataavailable` on the
+ * 1-second timeslice `MediaRecorder.start(1000)` asks for — it batches into
+ * bursts roughly every 3-3.5 seconds, and does this even at rest with zero
+ * added load. 1500ms was failing every run on every device before any load was
+ * added, which measures nothing. It has no effect on the final file: the app
+ * concatenates whatever chunks arrive into one blob regardless of their
+ * timing. 4000ms leaves headroom above the observed baseline cadence while
+ * still catching a genuine stall.
+ */
 export const LIMITS = {
     minFps: 24,
     bitrateFloorRatio: 0.8,   // 20% below the no-load baseline
-    maxJitterMs: 1500,
+    maxJitterMs: 4000,
     maxDeclineRatio: 0.9,     // the late window may not sit 10% under the early one
 };
 
@@ -25,6 +37,28 @@ export function median(xs) {
     const s = [...xs].sort((a, b) => a - b);
     const m = s.length >> 1;
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * The real average bitrate over a window, from raw bytes and elapsed time.
+ *
+ * `windowOf`'s kbps is a median of the 5-sample smoothed per-second figure,
+ * which is only honest when chunks land every second. This device's encoder
+ * bursts every ~3.5s instead — a 3MB chunk on one second, zero on the next
+ * two — and a 5-sample rolling window catches a different number of those
+ * bursts depending on where the window boundary happens to fall. On the first
+ * real device run that produced a fabricated 47% "decline" where the actual
+ * figure, computed this way, was 14%. Summing bytes and time across the whole
+ * window before dividing removes the phase sensitivity entirely: it does not
+ * matter when within the window a burst landed, only how much data arrived in
+ * total.
+ */
+export function windowRawKbps(run, [fromS, toS]) {
+    const inWin = run.samples.filter((s) => s.t >= fromS && s.t < toS);
+    if (!inWin.length) return null;
+    const bytes = inWin.reduce((sum, s) => sum + s.bytes, 0);
+    const secs = inWin.reduce((sum, s) => sum + s.dt, 0);
+    return secs > 0 ? Math.round((bytes * 8) / 1000 / secs) : null;
 }
 
 export function windowOf(run, [fromS, toS]) {
@@ -89,9 +123,13 @@ export function judge(run, baseline = null) {
         fails.push(`MediaRecorder errors: ${run.mrErrors.join(', ')}`);
     }
 
-    const kbps = median(post.map((s) => s.kbps));
+    // Raw totals, not a median of already-smoothed samples: see windowRawKbps.
+    const lastT = post.length ? post[post.length - 1].t + 1 : Infinity;
+    const kbps = windowRawKbps(run, [WARMUP_S, lastT]) ?? 0;
     if (baseline && baseline !== run) {
-        const ref = median(baseline.samples.filter((s) => s.t >= WARMUP_S).map((s) => s.kbps));
+        const baselinePost = baseline.samples.filter((s) => s.t >= WARMUP_S);
+        const baselineLastT = baselinePost.length ? baselinePost[baselinePost.length - 1].t + 1 : Infinity;
+        const ref = windowRawKbps(baseline, [WARMUP_S, baselineLastT]) ?? 0;
         if (ref > 0 && kbps < ref * LIMITS.bitrateFloorRatio) {
             fails.push(`bitrate ${kbps}kbps is ${Math.round(100 - (kbps / ref) * 100)}% below the ${ref}kbps baseline`);
         }
@@ -105,6 +143,8 @@ export function judge(run, baseline = null) {
     // floor. Deliberately fires even when both windows sit above the floor.
     const early = windowOf(run, EARLY_WINDOW);
     const late = windowOf(run, LATE_WINDOW);
+    if (early) early.kbps = windowRawKbps(run, EARLY_WINDOW) ?? early.kbps;
+    if (late) late.kbps = windowRawKbps(run, LATE_WINDOW) ?? late.kbps;
     if (early && late) {
         if (late.fps < early.fps * LIMITS.maxDeclineRatio) {
             fails.push(`fps declined ${Math.round(100 - (late.fps / early.fps) * 100)}% ` +
