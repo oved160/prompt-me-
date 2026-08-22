@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prompt Me — TEST E, recording headroom</title>
+<style>
+    :root { color-scheme: dark; }
+    body {
+        margin: 0; padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+        background: #0b0b0d; color: #f2efe9;
+        font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+    }
+    h1 { font-size: 1.1rem; margin: 0 0 4px; }
+    h2 { font-size: 0.9375rem; margin: 0 0 8px; }
+    p.note { margin: 0 0 14px; color: #9d9a94; font-size: 0.8125rem; }
+    button {
+        display: block; width: 100%; min-height: 50px; margin-bottom: 8px;
+        border: 1px solid #34323a; border-radius: 12px;
+        background: #17171b; color: inherit; font: inherit; font-weight: 600;
+        text-align: left; padding: 0 14px;
+    }
+    button.run.baseline { border-color: #4a4752; }
+    button#runall { background: #f2efe9; color: #0b0b0d; border-color: #f2efe9; margin-top: 12px; }
+    button:disabled { opacity: .4; }
+    .row { display: flex; gap: 8px; margin-top: 12px; }
+    .row button { margin-bottom: 0; text-align: center; }
+    .verdict {
+        margin: 14px 0; padding: 12px; border-radius: 10px;
+        background: #17171b; border: 1px solid #34323a;
+        font-size: 0.8125rem; white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+    }
+    .card {
+        margin: 12px 0; padding: 12px; border-radius: 10px;
+        background: #121216; border: 1px solid #2a2a32;
+    }
+    .card.pass { border-left: 3px solid #4ea36b; }
+    .card.fail { border-left: 3px solid #d1594c; }
+    .card.invalid { border-left: 3px solid #c9a227; }
+    .summary {
+        margin: 0 0 10px; font: 11px/1.5 ui-monospace, monospace;
+        white-space: pre-wrap; color: #c9c5bd;
+    }
+    .spark { margin-bottom: 8px; }
+    .sparklabel {
+        font: 10px/1.4 ui-monospace, monospace; color: #8b8880;
+        display: flex; justify-content: space-between;
+    }
+    .spark svg { width: 100%; height: 44px; display: block; }
+    .spark polyline { fill: none; stroke: #7fa8c9; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .spark line.limit { stroke: #d1594c; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+    pre#log {
+        margin: 12px 0 0; padding: 12px; max-height: 40vh; overflow: auto;
+        background: #08080a; border: 1px solid #26262c; border-radius: 10px;
+        font: 11px/1.45 ui-monospace, monospace; white-space: pre-wrap;
+        word-break: break-word; user-select: all;
+    }
+    video { width: 1px; height: 1px; position: absolute; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<h1>TEST E — recording headroom</h1>
+<p class="note">
+    Runs the real recording pipeline and adds compute beside it, then watches what
+    the recording does. Every signal is sampled once a second for the whole run,
+    because a phone that is fine for thirty seconds and throttles at sixty is
+    exactly what an average hides.
+    <strong>Hold the phone as you would while reading</strong> — resting it on a
+    cold desk changes the answer.
+</p>
+
+<div id="buttons"></div>
+<button id="runall">Run the whole sequence, with cooldowns</button>
+
+<div class="row">
+    <button id="copy">Copy log</button>
+    <button id="csv">Copy CSV</button>
+</div>
+
+<div class="verdict" id="verdict">No run yet. Start with E1 to check the camera, then E2 for the baseline every other run is judged against.</div>
+
+<div id="runs"></div>
+<div id="charts"></div>
+<pre id="log"></pre>
+
+<video id="preview" muted playsinline></video>
+
+<script type="module" src="bench.js"></script>
+</body>
+</html>
