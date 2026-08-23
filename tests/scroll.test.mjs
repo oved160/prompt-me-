@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, groupIntoRows, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
 
 test('constant mode advances at 40px per second at speed 1', () => {
     // One second of real 60fps frames, rather than one impossible 1s frame.
@@ -177,4 +177,91 @@ test('a script too short to scroll reports zero, not NaN or Infinity', () => {
     assert.equal(scrollProgress(100, 0), 0);
     assert.equal(scrollProgress(100, -20), 0);
     assert.equal(scrollProgress(NaN, 1000), 0);
+});
+
+test('words on the same rendered row are grouped into one row', () => {
+    // The bug this exists for: highlighting from a scroll position used each
+    // word's offsetTop directly, so the highlight snapped to whichever word
+    // began a row, sat there for the whole row, then jumped the row's entire
+    // width in one step. Rows hold different numbers of words, so those jumps
+    // were different sizes and the highlight looked like it moved at random.
+    const tops = [0, 0, 0, 50, 50, 100, 100, 100, 100];
+    const rows = groupIntoRows(tops);
+    assert.deepEqual(rows.tops, [0, 50, 100]);
+    assert.deepEqual(rows.rowOfWord, [0, 0, 0, 1, 1, 2, 2, 2, 2]);
+    assert.deepEqual(rows.firstWord, [0, 3, 5]);
+    assert.deepEqual(rows.lastWord, [2, 4, 8]);
+});
+
+test('every word belongs to exactly one row, and rows cover every word', () => {
+    const tops = [0, 0, 12, 12, 12, 40];
+    const rows = groupIntoRows(tops);
+    assert.equal(rows.rowOfWord.length, tops.length, 'a word was left unassigned');
+    for (let r = 0; r < rows.tops.length; r++) {
+        for (let i = rows.firstWord[r]; i <= rows.lastWord[r]; i++) {
+            assert.equal(rows.rowOfWord[i], r, `word ${i} disagrees with row ${r}'s range`);
+        }
+    }
+    assert.equal(rows.firstWord[0], 0);
+    assert.equal(rows.lastWord[rows.tops.length - 1], tops.length - 1);
+});
+
+test('the row highlight advances one row at a time, never in random jumps', () => {
+    // Walking the focus point down the script must visit every row in order.
+    // The old word-index approach skipped whole runs of words at once.
+    const tops = [0, 0, 0, 50, 50, 100, 100, 100];
+    const rows = groupIntoRows(tops);
+    const visited = [];
+    for (let focusY = 0; focusY <= 100; focusY += 5) {
+        const row = nearestWordIndex(rows.tops, focusY);
+        if (visited[visited.length - 1] !== row) visited.push(row);
+    }
+    assert.deepEqual(visited, [0, 1, 2], `rows were skipped or revisited: ${visited}`);
+});
+
+test('a single-row script and an empty one do not break the grouping', () => {
+    const one = groupIntoRows([0, 0, 0]);
+    assert.deepEqual(one.tops, [0]);
+    assert.deepEqual(one.firstWord, [0]);
+    assert.deepEqual(one.lastWord, [2]);
+
+    const none = groupIntoRows([]);
+    assert.deepEqual(none.tops, []);
+    assert.deepEqual(none.rowOfWord, []);
+    assert.deepEqual(groupIntoRows(null).tops, []);
+});
+
+test('a script too short to scroll stays put instead of flying off the top', () => {
+    // Found by review, then confirmed against the real numbers: the caller works
+    // maxPosition out as (last word's offsetTop - focus offset), which on a
+    // one-line script is about 6 - 81 = -75. Handing that back as the position
+    // scrolls the script UPWARDS out of frame, so the reader's entire script
+    // disappears on the first frame of the very first take.
+    const shortScriptMax = 6 - 812 * FOCUS_RATIO; // ~ -75
+    assert.ok(shortScriptMax < 0, 'the fixture must be negative or it proves nothing');
+
+    const after = stepScroll(0, {
+        dt: 0.016, speed: 1, viewportHeight: 812,
+        maxPosition: shortScriptMax, basePxPerSec: 40,
+    });
+    assert.equal(after, 0, `a one-line script scrolled to ${after}`);
+
+    // And it must stay there frame after frame, not creep.
+    let pos = 0;
+    for (let i = 0; i < 120; i++) {
+        pos = stepScroll(pos, {
+            dt: 0.016, speed: 3, viewportHeight: 812,
+            maxPosition: shortScriptMax, basePxPerSec: 40,
+        });
+    }
+    assert.equal(pos, 0, `drifted to ${pos} over two seconds at triple speed`);
+});
+
+test('a normal script still scrolls to its real end', () => {
+    // The clamp must not cap long scripts at zero.
+    let pos = 0;
+    for (let i = 0; i < 600; i++) {
+        pos = stepScroll(pos, { dt: 0.016, speed: 1, maxPosition: 500, basePxPerSec: 100 });
+    }
+    assert.equal(pos, 500, 'a long script did not reach its end');
 });

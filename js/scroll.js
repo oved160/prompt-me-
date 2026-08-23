@@ -43,9 +43,20 @@ export function stepScroll(position, {
     basePxPerSec = PIXELS_PER_SPEED_UNIT,
 } = {}) {
     if (paused) return position;
+
+    /*
+     * A script short enough to fit above the focus point produces a NEGATIVE
+     * maxPosition: the caller works it out as (last word's offsetTop − focus
+     * offset), and on a one-line script that is roughly 6px − 81px = −75px.
+     * Returning it below would scroll the script DOWNWARDS, out of the frame,
+     * on the very first frame — the whole script vanishing the instant the
+     * reader starts. Nothing may ever scroll above the top of the script.
+     */
+    const limit = Math.max(0, maxPosition);
+
     // Past the last word there is nothing left to reveal. Without this the
     // constant-speed fallback keeps winding an empty screen upward forever.
-    if (position >= maxPosition) return maxPosition;
+    if (position >= limit) return limit;
 
     // A backgrounded tab stops firing frames. When it resumes, the elapsed time
     // would otherwise be applied in one go and throw the reader far down the page.
@@ -55,9 +66,9 @@ export function stepScroll(position, {
         const target = wordTop - viewportHeight * FOCUS_RATIO;
         // Exponential convergence on the target, framerate independent.
         const factor = 1 - Math.exp(-EASE_RATE * safeDt);
-        return Math.min(position + (target - position) * factor, maxPosition);
+        return Math.min(position + (target - position) * factor, limit);
     }
-    return Math.min(position + speed * basePxPerSec * safeDt, maxPosition);
+    return Math.min(position + speed * basePxPerSec * safeDt, limit);
 }
 
 /**
@@ -84,6 +95,42 @@ export function nearestWordIndex(tops, focusY) {
     // lo is the first word at or past the focus point; the one before it may sit closer.
     if (lo > 0 && Math.abs(tops[lo - 1] - focusY) <= Math.abs(tops[lo] - focusY)) return lo - 1;
     return lo;
+}
+
+/**
+ * Groups words into the visual rows they actually render on.
+ *
+ * Scrolling is vertical, so a scroll position can only ever tell you which ROW
+ * the reader is on — never which word within it, because every word on a row
+ * shares one offsetTop. Highlighting a single word from a scroll position
+ * therefore snaps to whichever word happens to start a row, holds there for the
+ * whole row, then jumps the row's entire width at once. Rows hold different
+ * numbers of words, so those jumps are different sizes, and the highlight looks
+ * like it is moving at random. Rows are the honest unit.
+ *
+ * Note this is the RENDERED row, not the typed line: a long typed line wraps
+ * into several rows, and the reader follows the wrapped ones.
+ *
+ * @param {number[]} tops  each word's offsetTop, in document order
+ * @returns {{tops: number[], rowOfWord: number[], firstWord: number[], lastWord: number[]}}
+ */
+export function groupIntoRows(tops) {
+    const rows = { tops: [], rowOfWord: [], firstWord: [], lastWord: [] };
+    if (!tops || tops.length === 0) return rows;
+
+    for (let i = 0; i < tops.length; i++) {
+        // offsetTop never decreases in document order, so a larger value is a
+        // new row. Equal values are more words on the row already open.
+        if (rows.tops.length === 0 || tops[i] > rows.tops[rows.tops.length - 1]) {
+            rows.tops.push(tops[i]);
+            rows.firstWord.push(i);
+            rows.lastWord.push(i);
+        } else {
+            rows.lastWord[rows.lastWord.length - 1] = i;
+        }
+        rows.rowOfWord.push(rows.tops.length - 1);
+    }
+    return rows;
 }
 
 /**

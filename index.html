@@ -49,6 +49,11 @@
                close to full strength. Read words fade, but stay legible enough
                to glance back at. */
             --bone-dim:   oklch(97% 0.004 85 / 0.92);
+            /* Text the reader has not reached yet, in row mode. It has to be
+               clearly readable — people read ahead on a prompter — while still
+               losing to the current row. --bone-dim is only 8% off --bone,
+               which is invisible on a phone at arm's length. */
+            --bone-ahead: oklch(97% 0.004 85 / 0.58);
             --bone-faint: oklch(97% 0.004 85 / 0.40);
             --rec:        oklch(63% 0.21 25);
 
@@ -504,6 +509,26 @@
         /* Readers track a prompter by line, not by word. Lifting the whole
            current line gives a much larger target than one brighter word. */
         .line:has(.word.current) .word.said { color: var(--bone-dim); }
+
+        /* Time-based pacing lights the whole rendered row instead of one word.
+           A scroll position knows which row the reader is on and cannot know
+           which word within it, so marking a single word there is a guess that
+           snaps to whichever word begins a row and then jumps the row's whole
+           width at once.
+
+           Deliberately no background or box-shadow, unlike .word.current: a
+           highlighter block is legible over one word and becomes a solid slab
+           across a full row. Brightness carries it instead, which also means
+           nothing reflows as the highlight advances.
+
+           Scoped to .by-row so the single-word highlighter above survives
+           untouched for when voice tracking returns. */
+        #script-text.by-row .word { color: var(--bone-ahead); }
+        #script-text.by-row .word.said { color: var(--bone-faint); }
+        #script-text.by-row .word.row-current { color: var(--bone); }
+        /* The "lift the whole current line" rule is for the single-word
+           highlight; in row mode the row IS the unit, so read words stay read. */
+        #script-text.by-row .line:has(.word.row-current) .word.said { color: var(--bone-faint); }
 
         /* ============================================================
            Overlays
