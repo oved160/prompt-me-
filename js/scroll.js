@@ -5,7 +5,20 @@
  */
 
 export const PIXELS_PER_SPEED_UNIT = 40;   // fallback pace when the script's own is unknown
-export const FOCUS_RATIO = 0.1;            // current word sits right at the top, by the camera lens
+/**
+ * Where the word being read sits, as a fraction of the screen height.
+ *
+ * High, because the lens is at the top of the phone and the whole point is to
+ * read while looking down it. Not AT the top though: at 0.1 the reading line
+ * sat close to the edge and near the script mask's own fade, which made it feel
+ * cramped and clipped.
+ *
+ * #script-text's top padding in index.html must match this. At rest the first
+ * word sits exactly on the focus line, so that padding is
+ * (viewport height * FOCUS_RATIO); change one without the other and the script
+ * starts already scrolled.
+ */
+export const FOCUS_RATIO = 0.18;
 export const MAX_FRAME_SECONDS = 0.1;      // ignore gaps longer than this
 
 /**

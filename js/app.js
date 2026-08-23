@@ -19,8 +19,9 @@ const STORE_KEY = 'prompt-me';
  *
  * v3: the speed slider changed from a 0.2-3 multiplier to words per minute.
  * A stored "1" read as 1wpm would leave the script apparently frozen.
+ * v4: the default pace moved from 140 to 155wpm.
  */
-const STORE_VERSION = 3;
+const STORE_VERSION = 4;
 
 /**
  * Every browser on iOS is WebKit underneath, Chrome included, and Web Speech is
@@ -103,13 +104,85 @@ for (const id of [
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
     'share-take', 'save-take', 'retake', 'discard-take',
     'voice-toggle', 'mirror-toggle', 'restart-btn', 'back-btn', 'sheet-lang',
-    'speed-range', 'speed-readout', 'font-range', 'opacity-range',
+    'speed-range', 'speed-readout', 'font-range', 'opacity-range', 'pull-hint',
 ]) {
     dom[id] = document.getElementById(id);
 }
 
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>';
 const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.87l11-6.5a1 1 0 0 0 0-1.74l-11-6.5A1 1 0 0 0 8 5.5Z"/></svg>';
+
+/**
+ * Pull down from the top of the setup screen to reload.
+ *
+ * The browser's own pull-to-refresh never fires here, because html and body are
+ * overflow:hidden so the page as a whole never scrolls; #setup is its own
+ * scroller. This puts the gesture back where people expect it.
+ *
+ * Deliberately only on the setup screen. In the prompter the same pull would
+ * throw away a take that has not been saved, and the reader's hand is on the
+ * glass for the whole shoot.
+ */
+const PULL_THRESHOLD = 72;
+
+function wirePullToRefresh() {
+    const zone = dom['setup'];
+    const hint = dom['pull-hint'];
+    if (!zone || !hint) return;
+
+    let startY = 0;
+    let pull = 0;
+    let tracking = false;
+
+    const paint = () => {
+        const ratio = Math.min(1, pull / PULL_THRESHOLD);
+        hint.style.opacity = String(ratio);
+        // Slides in from above rather than appearing, so the gesture feels
+        // attached to the finger.
+        hint.style.transform = `translateY(${-100 + ratio * 100}%)`;
+        hint.querySelector('span').textContent =
+            pull >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull down to refresh';
+    };
+
+    const reset = () => {
+        tracking = false;
+        pull = 0;
+        hint.style.opacity = '0';
+        hint.style.transform = 'translateY(-100%)';
+    };
+
+    zone.addEventListener('touchstart', (e) => {
+        // Not while the finger is on a control. The script box is the one that
+        // matters: dragging down inside it to move through a long script would
+        // otherwise arm the gesture and reload the page out from under someone
+        // in the middle of editing.
+        if (e.target.closest('textarea, input, select, button, a')) { reset(); return; }
+        // Only from a genuinely un-scrolled top, and only one finger: starting
+        // this mid-list would fight the scroller, and two fingers is a zoom.
+        if (zone.scrollTop > 0 || e.touches.length !== 1) { reset(); return; }
+        startY = e.touches[0].clientY;
+        pull = 0;
+        tracking = true;
+    }, { passive: true });
+
+    zone.addEventListener('touchmove', (e) => {
+        if (!tracking) return;
+        // Any upward movement means they are scrolling the page, not pulling.
+        pull = Math.max(0, e.touches[0].clientY - startY);
+        if (pull === 0) { reset(); return; }
+        paint();
+    }, { passive: true });
+
+    zone.addEventListener('touchend', () => {
+        if (!tracking) return;
+        const shouldReload = pull >= PULL_THRESHOLD;
+        reset();
+        // The script is already in storage, so a reload keeps it.
+        if (shouldReload) location.reload();
+    });
+
+    zone.addEventListener('touchcancel', reset);
+}
 
 /* ---------------------------------------------------------------- setup */
 
@@ -127,6 +200,12 @@ function init() {
     dom['clear-btn'].addEventListener('click', () => {
         dom['script-input'].value = '';
         try { localStorage.removeItem(STORE_KEY); } catch { /* private mode */ }
+        // Clearing is starting over, and the slate is part of that: leaving it
+        // on "Take 07" for a brand new script counts takes of something that no
+        // longer exists.
+        takesShot = 0;
+        currentTake = 0;
+        paintTakeNumber();
         updateReadTime();
         dom['setup-note'].hidden = true;
         dom['script-input'].focus();
@@ -222,6 +301,7 @@ function init() {
     });
 
     paintSpeed();
+    wirePullToRefresh();
     updateReadTime();
 
     // Closing or refreshing mid-take would destroy it silently, so ask first.
@@ -1215,7 +1295,18 @@ async function runRecordingToggle() {
 
     // Hitting record before the script is running should do the obvious thing:
     // count down once, then start both together.
-    if (!hasStarted) await beginReading();
+    if (!hasStarted) {
+        await beginReading();
+    } else if (scrollPosition > 0) {
+        // The reader has been running the script to try the pace out. A take
+        // has to open on the first word, not wherever that preview happened to
+        // stop, so wind back to the top and count in properly.
+        setPaused(true, true);
+        restart();
+        await runCountdown();
+        if (dom['prompter'].hidden) return; // backed out during the countdown
+        setPaused(false, true);
+    }
 
     await acquireMicForRecording();
     recorder = new Recorder(recordStream || stream);

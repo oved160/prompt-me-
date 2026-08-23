@@ -92,6 +92,31 @@
            warm, printed and loud, and the cut to black when you start
            reading becomes part of the experience.
            ============================================================ */
+        /* Pull-to-refresh, shown only while the gesture is happening. The page
+           itself cannot use the browser's native version: html and body are
+           overflow:hidden so the screen never scrolls as a whole. */
+        #pull-hint {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 60;
+            display: flex;
+            justify-content: center;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-100%);
+        }
+        #pull-hint span {
+            margin-top: calc(10px + env(safe-area-inset-top));
+            padding: 8px 18px;
+            border-radius: 999px;
+            background: var(--umber);
+            color: var(--paper);
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+
         #setup {
             position: relative;
             height: 100dvh;
@@ -449,7 +474,12 @@
         }
 
         #script-text {
-            padding: 10dvh 6vw 80dvh;
+            /* Must stay in step with FOCUS_RATIO in js/scroll.js: at rest the
+               first word sits exactly on the focus line, so this padding is
+               viewport-height * FOCUS_RATIO. Raised from 10dvh, which put the
+               reading line close enough to the top edge to feel cramped and
+               to sit near the mask's fade. */
+            padding: 18dvh 6vw 80dvh;
             text-align: center;
             font-size: var(--font-size);
             font-weight: 600;
@@ -1066,6 +1096,8 @@
 </head>
 <body>
 
+    <div id="pull-hint" aria-hidden="true"><span>Pull down to refresh</span></div>
+
     <section id="setup">
         <header class="masthead">
             <p class="slate">
@@ -1241,9 +1273,9 @@
                      was faster than anyone reads and the usable range was
                      squeezed into about a fifth of it. 80-200 puts a normal
                      reading pace across the whole slider. -->
-                <input id="speed-range" type="range" min="80" max="200" step="5" value="140"
+                <input id="speed-range" type="range" min="80" max="200" step="5" value="155"
                        aria-describedby="speed-readout">
-                <output id="speed-readout" for="speed-range">140 wpm</output>
+                <output id="speed-readout" for="speed-range">155 wpm</output>
             </div>
             <div class="sheet-row">
                 <label for="font-range">Text size</label>
