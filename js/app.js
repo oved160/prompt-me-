@@ -28,6 +28,18 @@ const STORE_VERSION = 2;
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent);
 const WORDS_PER_MINUTE = 140;
 
+/**
+ * MVP scope: ship the time-based teleprompter (speed slider, recording,
+ * sharing) as the default product. Voice tracking is real and tested
+ * (js/speech.js, js/matcher.js, js/voicelevel.js, and the lab/bench harnesses
+ * under docs/) but its on-device feasibility during a recording is still
+ * unresolved — see docs/local-stt-progress.md. Gating it here rather than
+ * deleting it: every voice-tracking code path stays intact, tested, and one
+ * flag away from returning as a premium feature once that question is
+ * answered, instead of being rebuilt from a git history dig.
+ */
+const VOICE_TRACKING_ENABLED = false;
+
 const SAMPLE = `Hey, quick one. I used to spend my whole evening editing a two minute video, and most of that was just cutting out the parts where I lost my place.
 
 So I started reading from a teleprompter. Not a fancy one. Just my phone, propped up next to the lens.
@@ -176,6 +188,13 @@ function init() {
     }
     if (!supportsRecording()) {
         dom['record-btn'].disabled = true;
+    }
+    if (!VOICE_TRACKING_ENABLED) {
+        // Hide rather than disable: a greyed-out control still tells someone
+        // there is a feature they can't have, which is a worse MVP than not
+        // mentioning it. Every element carrying this attribute is untouched
+        // markup, so flipping the flag brings the whole feature straight back.
+        document.querySelectorAll('[data-voice-feature]').forEach((el) => { el.hidden = true; });
     }
 
     // Tapping the grabber is the gesture people try first to dismiss a sheet.
@@ -663,9 +682,9 @@ async function beginReading() {
     // Honour a deliberate "off". Forcing voice back on every take would put the
     // microphone back on Google's servers for someone who switched it off
     // precisely to stop that.
-    if (isSpeechSupported && voicePreferred) {
+    if (VOICE_TRACKING_ENABLED && isSpeechSupported && voicePreferred) {
         setVoice(true);
-    } else if (!isSpeechSupported) {
+    } else if (VOICE_TRACKING_ENABLED && !isSpeechSupported) {
         showStatus('Voice pacing needs Chrome on Android or a desktop. Scrolling at a steady speed.');
     }
 

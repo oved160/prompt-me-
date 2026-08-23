@@ -1065,7 +1065,7 @@
                 <button id="clear-btn" type="button">Clear</button>
             </div>
 
-            <div class="field">
+            <div class="field" data-voice-feature>
                 <label for="lang-select">Language</label>
                 <select id="lang-select">
                 <option value="en-US">English</option>
@@ -1079,7 +1079,7 @@
                 </select>
             </div>
 
-            <p class="disclosure">
+            <p class="disclosure" data-voice-feature>
                 Voice pacing sends your microphone audio to Google to be transcribed. Turn it
                 off in settings to keep everything on this device. Your video never leaves it
                 either way.
@@ -1091,12 +1091,12 @@
             <details>
                 <summary>Before you start</summary>
                 <ul>
-                    <li>Voice pacing needs Chrome on Android or a computer. On iPhone every browser
+                    <li data-voice-feature>Voice pacing needs Chrome on Android or a computer. On iPhone every browser
                         uses Safari's engine, where it does not run, so the script scrolls at a
                         steady speed instead.</li>
                     <li>Camera and microphone permission is needed.</li>
-                    <li>Speech is transcribed by Google, so voice pacing needs a connection.</li>
-                    <li>While recording, the script follows the sound of your voice rather than the words,
+                    <li data-voice-feature>Speech is transcribed by Google, so voice pacing needs a connection.</li>
+                    <li data-voice-feature>While recording, the script follows the sound of your voice rather than the words,
                         since the microphone can only go to one at a time. Word matching resumes after the take.</li>
                     <li>Your video is never uploaded. It stays on this device.</li>
                 </ul>
@@ -1224,11 +1224,11 @@
                      undoes the dimming the stylesheet asks for. -->
                 <input id="opacity-range" type="range" min="0" max="0.9" step="0.05" value="0.6">
             </div>
-            <div class="sheet-row">
+            <div class="sheet-row" data-voice-feature>
                 <span>Follow my voice</span>
                 <button id="voice-toggle" class="toggle" aria-pressed="true">On</button>
             </div>
-            <div class="sheet-row">
+            <div class="sheet-row" data-voice-feature>
                 <label for="sheet-lang">Language</label>
                 <select id="sheet-lang" class="sheet-select">
                     <option value="en-US">English</option>
@@ -1241,7 +1241,7 @@
                     <option value="ru-RU">Русский</option>
                 </select>
             </div>
-            <div class="sheet-row">
+            <div class="sheet-row" data-voice-feature>
                 <span>Voice tracking</span>
                 <span id="voice-state">Off</span>
             </div>
