@@ -2,7 +2,7 @@ import { ScriptMatcher, tokenize } from './matcher.js';
 import { SpeechListener, isSpeechSupported } from './speech.js';
 import { Recorder, shareRecording, downloadRecording, canShareVideo, pickMimeType } from './recorder.js';
 import {
-    stepScroll, naturalPace, nearestWordIndex, scrollProgress, groupIntoRows, FOCUS_RATIO,
+    stepScroll, naturalPace, scrollProgress, groupIntoRows, wordAtScroll, FOCUS_RATIO,
 } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
@@ -87,7 +87,6 @@ let basePxPerSec = 40;     // the script's own reading pace, in pixels per secon
 let takeVoiceWatch = null; // watchdog deciding whether word tracking survives a take
 let wordTops = [];         // each word's offsetTop, for locating the focus point
 let rows = { tops: [], rowOfWord: [], firstWord: [], lastWord: [] };
-let lastPaintedRow = -1;   // which visual row is currently lit
 
 const dom = {};
 for (const id of [
@@ -754,7 +753,6 @@ function buildScript(text) {
     measurePace();
     wordTops = wordSpans.map(w => w.offsetTop);
     rows = groupIntoRows(wordTops);
-    lastPaintedRow = -1;
     paintProgress();
 }
 
@@ -773,13 +771,11 @@ function buildScript(text) {
  *   the script.
  */
 function measurePace(keepPlace = false) {
-    const anchorWord = keepPlace && lastPaintedRow >= 0
-        ? rows.firstWord[lastPaintedRow] : undefined;
+    const anchorWord = keepPlace && lastPaintedCursor >= 0 ? lastPaintedCursor : undefined;
 
     wordTops = wordSpans.map(w => w.offsetTop);
     // Rotating the phone rewraps the text, so the rows are different ones.
     rows = groupIntoRows(wordTops);
-    lastPaintedRow = -1;
 
     if (anchorWord !== undefined && wordTops[anchorWord] !== undefined) {
         scrollPosition = Math.max(0, wordTops[anchorWord] - window.innerHeight * FOCUS_RATIO);
@@ -849,7 +845,7 @@ function scrollLoop(now) {
     // script we are.
     if (!isVoiceMode && rows.tops.length) {
         const focusY = scrollPosition + window.innerHeight * FOCUS_RATIO;
-        paintRow(nearestWordIndex(rows.tops, focusY));
+        paintCursor(wordAtScroll(rows, focusY));
         const maxScroll = lastSpan ? lastSpan.offsetTop - window.innerHeight * FOCUS_RATIO : 0;
         dom['progress-bar'].style.width = `${scrollProgress(scrollPosition, maxScroll) * 100}%`;
     }
@@ -1027,10 +1023,6 @@ function resetTranscript() {
 function paintCursor(cursor) {
     if (cursor < 0 || cursor === lastPaintedCursor) return;
 
-    // Word-level tracking is precise enough to mark a single word, so drop the
-    // row treatment rather than leaving both painters fighting over the styling.
-    dom['script-text'].classList.remove('by-row');
-
     // Only repaint the span range that changed. Touching every span on each
     // result makes long scripts stutter.
     const from = Math.max(0, Math.min(lastPaintedCursor < 0 ? 0 : lastPaintedCursor, cursor));
@@ -1040,33 +1032,6 @@ function paintCursor(cursor) {
         wordSpans[i].classList.toggle('current', i === cursor);
     }
     lastPaintedCursor = cursor;
-}
-
-/**
- * Lights the visual row the reader should be on, and dims everything above it.
- *
- * The row, not a word: see groupIntoRows. Only the span of words between the
- * previously lit row and this one is touched, so a long script does not have
- * every word's classList rewritten on every frame.
- */
-function paintRow(row) {
-    if (row < 0 || row === lastPaintedRow || !rows.tops.length) return;
-
-    // Row mode restyles the script: the current row is the only bright thing,
-    // rather than one word wearing a highlighter block.
-    dom['script-text'].classList.add('by-row');
-
-    const lo = Math.max(0, Math.min(lastPaintedRow < 0 ? 0 : lastPaintedRow, row));
-    const hi = Math.min(Math.max(lastPaintedRow, row), rows.tops.length - 1);
-    const from = rows.firstWord[lo];
-    const to = rows.lastWord[hi];
-
-    for (let i = from; i <= to && i < wordSpans.length; i++) {
-        const wordRow = rows.rowOfWord[i];
-        wordSpans[i].classList.toggle('said', wordRow < row);
-        wordSpans[i].classList.toggle('row-current', wordRow === row);
-    }
-    lastPaintedRow = row;
 }
 
 function paintProgress() {

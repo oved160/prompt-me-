@@ -134,6 +134,55 @@ export function groupIntoRows(tops) {
 }
 
 /**
+ * Which word the reader should be on, estimated from the scroll position.
+ *
+ * Taking the nearest word to the focus point does not work: every word on a row
+ * shares one offsetTop, so it snaps to whichever word begins a row, holds there
+ * for the row's whole height, then jumps the row's entire width at once. Rows
+ * hold different numbers of words, so those jumps come out at 4, 1, 3, 2 words
+ * and the highlight looks like it is moving at random.
+ *
+ * So interpolate ACROSS the row instead. As the scroll travels down one row's
+ * height, the reader is travelling along that row's words, and the fraction of
+ * the way down maps to the fraction of the way along. That is the same
+ * assumption the scroll itself already rests on — naturalPace() sets the speed
+ * from the script's own word count — so this is no more of a guess than the
+ * pacing is, and it advances one word at a time.
+ *
+ * @param {{tops: number[], firstWord: number[], lastWord: number[]}} rows
+ * @param {number} focusY  the scroll position under the focus line
+ * @returns {number} word index, or -1 when there is nothing to point at
+ */
+export function wordAtScroll(rows, focusY) {
+    if (!rows || !rows.tops || rows.tops.length === 0) return -1;
+
+    // The row the focus point is INSIDE, which is the last one at or above it.
+    // Deliberately not the nearest: nearest flips to the next row halfway down
+    // the current one, cutting every row's second half off the highlight.
+    let row = 0;
+    let lo = 0;
+    let hi = rows.tops.length - 1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rows.tops[mid] <= focusY) { row = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+
+    const first = rows.firstWord[row];
+    const last = rows.lastWord[row];
+    const wordsHere = last - first + 1;
+
+    // Height of this row, taken from the gap to the next one. The final row has
+    // no next, so it borrows the previous gap rather than dividing by zero.
+    let rowHeight = row + 1 < rows.tops.length
+        ? rows.tops[row + 1] - rows.tops[row]
+        : (row > 0 ? rows.tops[row] - rows.tops[row - 1] : 0);
+    if (!(rowHeight > 0)) return first;
+
+    const through = Math.min(1, Math.max(0, (focusY - rows.tops[row]) / rowHeight));
+    return Math.min(last, first + Math.floor(through * wordsHere));
+}
+
+/**
  * How far through the script the reader is, 0..1, from the scroll alone.
  *
  * Voice tracking normally drives the progress bar from the matcher's cursor,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, groupIntoRows, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, groupIntoRows, wordAtScroll, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
 
 test('constant mode advances at 40px per second at speed 1', () => {
     // One second of real 60fps frames, rather than one impossible 1s frame.
@@ -206,19 +206,6 @@ test('every word belongs to exactly one row, and rows cover every word', () => {
     assert.equal(rows.lastWord[rows.tops.length - 1], tops.length - 1);
 });
 
-test('the row highlight advances one row at a time, never in random jumps', () => {
-    // Walking the focus point down the script must visit every row in order.
-    // The old word-index approach skipped whole runs of words at once.
-    const tops = [0, 0, 0, 50, 50, 100, 100, 100];
-    const rows = groupIntoRows(tops);
-    const visited = [];
-    for (let focusY = 0; focusY <= 100; focusY += 5) {
-        const row = nearestWordIndex(rows.tops, focusY);
-        if (visited[visited.length - 1] !== row) visited.push(row);
-    }
-    assert.deepEqual(visited, [0, 1, 2], `rows were skipped or revisited: ${visited}`);
-});
-
 test('a single-row script and an empty one do not break the grouping', () => {
     const one = groupIntoRows([0, 0, 0]);
     assert.deepEqual(one.tops, [0]);
@@ -264,4 +251,52 @@ test('a normal script still scrolls to its real end', () => {
         pos = stepScroll(pos, { dt: 0.016, speed: 1, maxPosition: 500, basePxPerSec: 100 });
     }
     assert.equal(pos, 500, 'a long script did not reach its end');
+});
+
+test('the highlight advances one word at a time, never in random jumps', () => {
+    // The reported bug: snapping to the nearest word offset moved the mark in
+    // jumps of 4, 1, 3, 2 words on the real sample script, because every word
+    // on a row shares one offsetTop. Interpolating across the row has to walk
+    // the words one by one instead.
+    const tops = [0, 0, 0, 0, 0, 50, 50, 50, 50, 100, 100, 100];
+    const rows = groupIntoRows(tops);
+
+    const seen = [];
+    for (let y = 0; y <= 100; y += 1) {
+        const w = wordAtScroll(rows, y);
+        if (seen[seen.length - 1] !== w) seen.push(w);
+    }
+    const jumps = seen.slice(1).map((w, i) => w - seen[i]);
+    assert.deepEqual([...new Set(jumps)], [1], `words were skipped: jumps of ${[...new Set(jumps)]}`);
+    assert.equal(seen[0], 0, 'did not start on the first word');
+});
+
+test('the highlight covers every word on a row, not just the one that starts it', () => {
+    // Snapping to offsets only ever lit the first word of each row. Scrolling
+    // through a row's height must visit all of that row's words.
+    const rows = groupIntoRows([0, 0, 0, 0, 0, 50, 50]);
+    const visited = new Set();
+    for (let y = 0; y < 50; y += 0.5) visited.add(wordAtScroll(rows, y));
+    assert.deepEqual([...visited].sort((a, b) => a - b), [0, 1, 2, 3, 4],
+        'some words on the first row were never highlighted');
+});
+
+test('the highlight never runs past the row it is on', () => {
+    const rows = groupIntoRows([0, 0, 0, 40, 40]);
+    // Right at the bottom edge of row 0, still row 0's last word.
+    assert.equal(wordAtScroll(rows, 39.9), 2);
+    // Crossing into row 1 moves to its first word, not further.
+    assert.equal(wordAtScroll(rows, 40), 3);
+});
+
+test('the final row and degenerate input are handled', () => {
+    const rows = groupIntoRows([0, 0, 30, 30]);
+    // Past the end of the last row it must clamp to the last word, not overrun.
+    assert.equal(wordAtScroll(rows, 9999), 3);
+    // Above the first row.
+    assert.equal(wordAtScroll(rows, -100), 0);
+    // A one-row script has no next row to measure its height from.
+    assert.equal(wordAtScroll(groupIntoRows([0, 0, 0]), 5), 0);
+    assert.equal(wordAtScroll(groupIntoRows([]), 5), -1);
+    assert.equal(wordAtScroll(null, 5), -1);
 });
