@@ -16,8 +16,11 @@ const STORE_KEY = 'prompt-me';
  * stored as though it were a deliberate choice and the new one never reaches
  * anyone who used the app before. On a version change the sliders fall back to
  * their current defaults; the script, language and take count are kept.
+ *
+ * v3: the speed slider changed from a 0.2-3 multiplier to words per minute.
+ * A stored "1" read as 1wpm would leave the script apparently frozen.
  */
-const STORE_VERSION = 2;
+const STORE_VERSION = 3;
 
 /**
  * Every browser on iOS is WebKit underneath, Chrome included, and Web Speech is
@@ -100,7 +103,7 @@ for (const id of [
     'review-play', 'review-back', 'review-restart', 'review-seek', 'review-time',
     'share-take', 'save-take', 'retake', 'discard-take',
     'voice-toggle', 'mirror-toggle', 'restart-btn', 'back-btn', 'sheet-lang',
-    'speed-range', 'font-range', 'opacity-range',
+    'speed-range', 'speed-readout', 'font-range', 'opacity-range',
 ]) {
     dom[id] = document.getElementById(id);
 }
@@ -152,7 +155,7 @@ function init() {
 
     dom['font-range'].addEventListener('input', () => { applyFontSize(); measurePace(true); savePreferences(); });
     dom['opacity-range'].addEventListener('input', () => { applyShade(); savePreferences(); });
-    dom['speed-range'].addEventListener('input', savePreferences);
+    dom['speed-range'].addEventListener('input', () => { paintSpeed(); updateReadTime(); savePreferences(); });
     dom['lang-select'].addEventListener('change', () => {
         dom['sheet-lang'].value = dom['lang-select'].value;
         savePreferences();
@@ -218,6 +221,7 @@ function init() {
         else setPaused(!isPaused);
     });
 
+    paintSpeed();
     updateReadTime();
 
     // Closing or refreshing mid-take would destroy it silently, so ask first.
@@ -578,7 +582,11 @@ function updateReadTime() {
         dom['read-time'].textContent = 'No script yet';
         return;
     }
-    const seconds = Math.round((count / WORDS_PER_MINUTE) * 60);
+    // The reader's own chosen pace, not a fixed 140: the slider decides how
+    // long the script actually takes, so an estimate ignoring it would promise
+    // a time the prompter has no intention of keeping.
+    const wpm = WORDS_PER_MINUTE * readingSpeed();
+    const seconds = Math.round((count / wpm) * 60);
     const label = seconds < 60
         ? `${seconds} sec`
         : `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} sec`;
@@ -826,7 +834,7 @@ function scrollLoop(now) {
         // audible instead of scrolling on regardless.
         paused: isPaused || (levelPacing && !readerIsSpeaking()),
         voiceMode: isVoiceMode,
-        speed: parseFloat(dom['speed-range'].value),
+        speed: readingSpeed(),
         wordTop: currentSpan ? currentSpan.offsetTop : null,
         viewportHeight: window.innerHeight,
         basePxPerSec,
@@ -1137,6 +1145,22 @@ function restart() {
 
 function applyFontSize() {
     dom['script-text'].style.setProperty('--font-size', `${dom['font-range'].value}px`);
+}
+
+/**
+ * The speed slider in words per minute, as the multiplier stepScroll wants.
+ *
+ * basePxPerSec already paces the script at WORDS_PER_MINUTE, so the multiplier
+ * is simply how far the reader's chosen pace is from that. The script then
+ * takes wordCount/wpm minutes, which is what the number on screen promises.
+ */
+function readingSpeed() {
+    const wpm = parseFloat(dom['speed-range'].value);
+    return Number.isFinite(wpm) && wpm > 0 ? wpm / WORDS_PER_MINUTE : 1;
+}
+
+function paintSpeed() {
+    if (dom['speed-readout']) dom['speed-readout'].textContent = `${dom['speed-range'].value} wpm`;
 }
 
 function applyShade() {

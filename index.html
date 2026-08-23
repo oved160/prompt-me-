@@ -554,9 +554,16 @@
 
         /* Doubles as the pause control: it is already where the eye goes to
            check the recording, and it keeps the bottom bar down to four targets. */
+        /* Sits above the controls, not at the top.
+           At the top it landed inside the script: the text mask makes words
+           legible from 5% down (~41px) and the focus line sits at 10dvh
+           (~81px), so a 44px-tall pill starting at 14px overlapped the reading
+           band, and on a phone with a notch env(safe-area-inset-top) pushed it
+           directly over the current word. Down here it clears the text
+           entirely and sits by the thumb that needs to tap it. */
         #rec-dot {
             position: absolute;
-            top: calc(14px + env(safe-area-inset-top));
+            bottom: calc(116px + env(safe-area-inset-bottom));
             left: 50%;
             transform: translateX(-50%);
             z-index: 5;
@@ -618,7 +625,7 @@
         /* Sits over live script text, so it needs its own ground to stay legible. */
         #status {
             position: absolute;
-            bottom: calc(118px + env(safe-area-inset-bottom));
+            bottom: calc(172px + env(safe-area-inset-bottom));
             left: 50%;
             transform: translateX(-50%);
             z-index: 4;
@@ -762,6 +769,17 @@
             margin: 0 auto 18px;
         }
 
+        /* Tabular figures so the readout does not jitter in width as the
+           number changes, which would nudge the slider under the thumb. */
+        #speed-readout {
+            flex: 0 0 auto;
+            min-width: 4.6em;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            font-size: 0.8125rem;
+            color: var(--bone-faint);
+        }
+
         .sheet-row {
             display: flex;
             align-items: center;
@@ -804,6 +822,8 @@
             -webkit-appearance: none;
             appearance: none;
             width: 58%;
+            flex: 1 1 auto;
+            min-width: 0;
             height: 28px;
             background: none;
         }
@@ -1060,7 +1080,7 @@
         <div class="sheet-inner composer">
             <p id="setup-note" hidden></p>
             <div>
-                <span class="label">The script</span>
+                <label class="label" for="script-input">The script</label>
                 <textarea id="script-input" dir="auto" placeholder="Paste your script"></textarea>
             </div>
 
@@ -1216,7 +1236,14 @@
 
             <div class="sheet-row">
                 <label for="speed-range">Speed</label>
-                <input id="speed-range" type="range" min="0.2" max="3" step="0.1" value="1">
+                <!-- Words per minute, not an abstract multiplier. The old 0.2-3
+                     multiplier spanned 28-420wpm, so more than half the track
+                     was faster than anyone reads and the usable range was
+                     squeezed into about a fifth of it. 80-200 puts a normal
+                     reading pace across the whole slider. -->
+                <input id="speed-range" type="range" min="80" max="200" step="5" value="140"
+                       aria-describedby="speed-readout">
+                <output id="speed-readout" for="speed-range">140 wpm</output>
             </div>
             <div class="sheet-row">
                 <label for="font-range">Text size</label>
