@@ -1,7 +1,7 @@
 import { ScriptMatcher, tokenize } from './matcher.js';
 import { SpeechListener, isSpeechSupported } from './speech.js';
 import { Recorder, shareRecording, downloadRecording, canShareVideo, pickMimeType } from './recorder.js';
-import { stepScroll, naturalPace, nearestWordIndex, FOCUS_RATIO } from './scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, FOCUS_RATIO } from './scroll.js';
 import { TranscriptFeeder } from './transcript.js';
 import { detectDirection } from './direction.js';
 import { SpeechActivity, rmsOf } from './voicelevel.js';
@@ -304,12 +304,19 @@ async function acquireMicForRecording() {
         // straight back when the take ends.
         if (isVoiceMode) setVoice(false);
 
-        await prepareLevelPacing(mic);
-        // Pace by sound from the very first frame. Waiting to find out whether
-        // recognition survives left the script sitting still for six seconds at
-        // the top of every take, which is exactly the delay it looked like.
-        levelPacing = true;
-        showStatus('Following the sound of your voice while recording.');
+        // Sound pacing is voice tracking by another name: it holds the script
+        // whenever the room goes quiet and releases it when it hears a voice.
+        // In the MVP the script scrolls purely on the clock, so the analyser is
+        // never built and the take never mentions the microphone. The mic is
+        // still opened above, because the video needs its audio.
+        if (VOICE_TRACKING_ENABLED) {
+            await prepareLevelPacing(mic);
+            // Pace by sound from the very first frame. Waiting to find out whether
+            // recognition survives left the script sitting still for six seconds at
+            // the top of every take, which is exactly the delay it looked like.
+            levelPacing = true;
+            showStatus('Following the sound of your voice while recording.');
+        }
         return true;
     } catch {
         // Better a silent video than no take at all, but say so.
@@ -805,12 +812,20 @@ function scrollLoop(now) {
         maxPosition: lastSpan ? lastSpan.offsetTop - window.innerHeight * FOCUS_RATIO : Infinity,
     });
 
-    // Pacing by sound knows nothing about words, but it does know where it has
-    // scrolled to. Showing that keeps the highlight meaningful instead of
-    // leaving it stuck on a word the reader passed long ago.
-    if (levelPacing && wordTops.length) {
+    // Where the reader is, worked out from the scroll rather than from words.
+    //
+    // The highlight and the progress bar are both normally driven by the
+    // matcher's cursor, which only moves when speech is being recognised. With
+    // voice tracking off that cursor never advances, so without this the
+    // highlight stays on the first word and the progress bar sits at zero for
+    // the whole read — the two most visible things on screen, both frozen.
+    // Scroll position is the honest substitute: it is exactly how far down the
+    // script we are.
+    if (!isVoiceMode && wordTops.length) {
         const focusY = scrollPosition + window.innerHeight * FOCUS_RATIO;
         paintCursor(nearestWordIndex(wordTops, focusY));
+        const maxScroll = lastSpan ? lastSpan.offsetTop - window.innerHeight * FOCUS_RATIO : 0;
+        dom['progress-bar'].style.width = `${scrollProgress(scrollPosition, maxScroll) * 100}%`;
     }
 
     dom['script-text'].style.transform = `translate3d(0, ${-scrollPosition}px, 0)`;

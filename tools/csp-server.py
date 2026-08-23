@@ -29,6 +29,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # for two years. Skipped here and only here.
             if key != 'Strict-Transport-Security':
                 self.send_header(key, value)
+        # ES modules are cached aggressively, and a stale one does not fail
+        # quietly: if js/scroll.js is served from cache without an export that
+        # js/app.js now imports, the whole module graph throws and the entire
+        # app silently does nothing. That has already cost this project a
+        # debugging session where a correct fix looked broken. No caching in dev.
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
         super().end_headers()
 
     def log_message(self, fmt, *args):
@@ -36,5 +42,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print('serving', ROOT, 'with vercel.json headers on http://127.0.0.1:4399')
-    http.server.HTTPServer(('127.0.0.1', 4399), Handler).serve_forever()
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 4399
+    print(f'serving {ROOT} with vercel.json headers on http://127.0.0.1:{port}')
+    http.server.HTTPServer(('127.0.0.1', port), Handler).serve_forever()

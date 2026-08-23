@@ -87,6 +87,24 @@ export function nearestWordIndex(tops, focusY) {
 }
 
 /**
+ * How far through the script the reader is, 0..1, from the scroll alone.
+ *
+ * Voice tracking normally drives the progress bar from the matcher's cursor,
+ * which only advances when words are recognised. Without it that cursor never
+ * moves and the bar sits at zero for the entire read. Scroll position answers
+ * the same question honestly and without a microphone.
+ *
+ * @param {number} position   current offset in pixels
+ * @param {number} maxScroll  furthest the script can scroll
+ * @returns {number} 0..1, and 0 rather than NaN or Infinity for a script that
+ *   is too short to scroll at all
+ */
+export function scrollProgress(position, maxScroll) {
+    if (!(maxScroll > 0) || !Number.isFinite(position)) return 0;
+    return Math.min(1, Math.max(0, position / maxScroll));
+}
+
+/**
  * The pace a script reads at, in pixels per second, from its own length.
  *
  * A fixed 40px/s is a guess that suits one font size and one script. Deriving

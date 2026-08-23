@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stepScroll, naturalPace, nearestWordIndex, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
+import { stepScroll, naturalPace, nearestWordIndex, scrollProgress, FOCUS_RATIO, MAX_FRAME_SECONDS, PIXELS_PER_SPEED_UNIT } from '../js/scroll.js';
 
 test('constant mode advances at 40px per second at speed 1', () => {
     // One second of real 60fps frames, rather than one impossible 1s frame.
@@ -151,4 +151,30 @@ test('words sharing a line all have the same offset, and that is fine', () => {
     const tops = [0, 0, 0, 50, 50, 100];
     const i = nearestWordIndex(tops, 50);
     assert.ok(i === 3 || i === 4, `expected a word on the 50px line, got index ${i}`);
+});
+
+test('progress follows the scroll when there is no voice cursor to follow', () => {
+    // Voice tracking normally drives the progress bar from the matcher's
+    // cursor. With voice off that cursor never advances, so the bar would sit
+    // at zero for the whole read — one of the two most visible things on
+    // screen, frozen. Scroll position has to stand in for it.
+    assert.equal(scrollProgress(0, 1000), 0);
+    assert.equal(scrollProgress(250, 1000), 0.25);
+    assert.equal(scrollProgress(1000, 1000), 1);
+});
+
+test('progress never runs past the end or behind the start', () => {
+    // stepScroll clamps to maxPosition, but the focus-point maths can hand us a
+    // position slightly past it, and a bar wider than 100% breaks the layout.
+    assert.equal(scrollProgress(1200, 1000), 1);
+    assert.equal(scrollProgress(-50, 1000), 0);
+});
+
+test('a script too short to scroll reports zero, not NaN or Infinity', () => {
+    // A script that fits on one screen gives maxScroll <= 0. Dividing by it
+    // would write "NaN%" or "Infinity%" straight into a style attribute.
+    assert.equal(scrollProgress(0, 0), 0);
+    assert.equal(scrollProgress(100, 0), 0);
+    assert.equal(scrollProgress(100, -20), 0);
+    assert.equal(scrollProgress(NaN, 1000), 0);
 });
