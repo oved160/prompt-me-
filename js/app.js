@@ -73,6 +73,12 @@ let pendingTakeMs = 0;
 let takesShot = 0;        // attempts rolled, kept or not, the way a slate counts
 let currentTake = 0;      // the number on the take being shot or reviewed
 let reviewDuration = 0;   // seconds, resolved for the review player
+// Whether this take has already been sent somewhere. Sharing and downloading
+// are not alternatives: a reader who posts a take to Instagram very often wants
+// the file kept as well, and someone whose share sheet came up empty needs the
+// download without having to shoot it again.
+let takeShared = false;
+let takeSaved = false;
 let voiceState = 'idle';  // last state reported by the recogniser
 let voiceError = '';
 let voiceHeard = 0;       // phrases the recogniser has actually returned
@@ -223,7 +229,11 @@ function init() {
     dom['share-take'].addEventListener('click', shareTake);
     dom['save-take'].addEventListener('click', saveTake);
     dom['retake'].addEventListener('click', retake);
-    dom['discard-take'].addEventListener('click', () => { discardTake(); leaveShoot(''); });
+    dom['discard-take'].addEventListener('click', () => {
+        const kept = takeSaved || takeShared;
+        discardTake();
+        leaveShoot(kept ? 'Take finished.' : '');
+    });
     dom['scrim'].addEventListener('click', () => openSheet(false));
     dom['diag-btn'].addEventListener('click', copyDiagnostics);
 
@@ -1405,7 +1415,9 @@ function openReview() {
 
     dom['review-take'].textContent = `Take ${String(currentTake).padStart(2, '0')}`;
     dom['review-length'].textContent = formatClock(pendingTakeMs);
-    dom['review-note'].textContent = 'Check it before you keep it. Nothing has been saved yet.';
+    takeShared = false;
+    takeSaved = false;
+    paintReviewActions();
     // A share button that cannot share is worse than no share button.
     dom['share-take'].hidden = !canShareVideo(pendingTake, takeName());
     setPlayIcon(false);
@@ -1522,14 +1534,19 @@ async function shareTake() {
     try {
         const result = await shareRecording(pendingTake, takeName());
         if (result.method === 'share') {
-            discardTake();
-            leaveShoot('Shared. The take is on its way to whichever app you picked.');
+            // Deliberately does NOT leave the review screen. Handing the file to
+            // Instagram is not the same as keeping it: the share sheet gives no
+            // way back, and a take that only exists inside another app is gone
+            // as far as this one is concerned. Staying here leaves Download
+            // available for exactly that.
+            takeShared = true;
+            paintReviewActions();
             return;
         }
         // Cancelled, unsupported or failed: the take stays exactly where it is.
         dom['review-note'].textContent = result.method === 'unsupported'
-            ? 'This browser cannot share files. Use Download instead.'
-            : 'Not shared. The take is still here, try again or download it.';
+            ? 'This browser cannot share files. Download it instead — the button is right there.'
+            : 'Not shared. The take is still here: try again, or download it to your device.';
     } finally {
         dom['share-take'].disabled = false;
     }
@@ -1541,11 +1558,32 @@ function saveTake() {
     dom['review-note'].textContent = 'Saving';
     try {
         downloadRecording(pendingTake, takeName());
-        discardTake();
-        leaveShoot('Saved to your downloads.');
+        // Same reasoning as sharing: keeping the file and posting it are two
+        // different things, and doing one should never cost you the other.
+        takeSaved = true;
+        paintReviewActions();
     } catch {
         dom['review-note'].textContent = 'That did not save. The take is still here, try again.';
     }
+}
+
+/**
+ * Reflects what has already happened to this take.
+ *
+ * Once it has been saved or shared, "Discard" is the wrong word for the way
+ * out — there is nothing left to lose — so the button becomes "Done".
+ */
+function paintReviewActions() {
+    let note;
+    if (takeSaved && takeShared) note = 'Saved and shared. Shoot another, or tap Done.';
+    else if (takeShared) note = 'Shared. You can still download it to your device.';
+    else if (takeSaved) note = 'Saved to your device. You can still share it.';
+    else note = 'Check it before you keep it. Nothing has been saved yet.';
+
+    dom['review-note'].textContent = note;
+    const kept = takeSaved || takeShared;
+    dom['discard-take'].textContent = kept ? 'Done' : 'Discard';
+    dom['discard-take'].setAttribute('aria-label', kept ? 'Finish with this take' : 'Discard this take');
 }
 
 /** Discard the take and go straight back to the top of the script to shoot again. */
