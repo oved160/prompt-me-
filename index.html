@@ -1089,6 +1089,21 @@
         }
         #discard-take { color: var(--bone-dim); background: none; border: 1px solid oklch(97% 0.004 85 / 0.16); }
 
+        .credit {
+            margin: 22px 0 0;
+            text-align: center;
+            font-size: 0.75rem;
+            color: oklch(48% 0.05 45 / 0.7);
+        }
+        .credit a {
+            color: inherit;
+            font-weight: 600;
+            text-decoration: underline;
+            text-underline-offset: 0.15em;
+            text-decoration-color: oklch(48% 0.05 45 / 0.35);
+        }
+        .credit a:hover, .credit a:focus-visible { text-decoration-color: currentColor; }
+
         @media (prefers-reduced-motion: reduce) {
             * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
         }
@@ -1158,6 +1173,11 @@
                     <li>Your video is never uploaded. It stays on this device.</li>
                 </ul>
             </details>
+
+            <footer class="credit">
+                Built by
+                <a href="https://www.linkedin.com/in/oved-elisha-3ba8851aa/" target="_blank" rel="noopener noreferrer">Oved Elisha</a>
+            </footer>
         </div>
     </section>
 
